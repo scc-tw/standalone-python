@@ -1,4 +1,5 @@
 name: "release"
+permissions: {contents: read}
 
 on: {
     "push": {
@@ -47,6 +48,7 @@ jobs: {
         ],
     },
     release: {
+        permissions: {contents: write},
         "runs-on": "ubuntu-latest",
         "needs": "build",
         "steps": [
