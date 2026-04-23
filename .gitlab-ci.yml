@@ -66,6 +66,11 @@ build:
         architecture: ["x86_64", "x86"]
   tags: [shell]
   rules:
+    # Python 3.15 is still in alpha and pip 26.0.1 (bundled in get-pip.py)
+    # doesn't yet implement `Distribution.locate_file`, which 3.15 enforces.
+    # Let those cells fail non-blockingly until upstream pip catches up.
+    - if: '$CI_COMMIT_TAG == null && $version =~ /^3\.15/'
+      allow_failure: true
     - if: $CI_COMMIT_TAG == null
 
 generate_release_tag:
