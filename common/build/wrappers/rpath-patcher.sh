@@ -64,6 +64,21 @@ patch_elf_rpath() {
         | grep 'ELF' | grep 'dynamically linked' | cut -d: -f1 \
         | while read -r elf_file; do
             elf_file=$(realpath "$elf_file")
+            base=$(basename "$elf_file")
+
+            # NEVER patchelf musl's libc/ld.so. It's a static-pie dual-purpose
+            # binary where `patchelf --set-rpath` disturbs internal offsets
+            # used by _start, causing a SIGSEGV right after execve — *before*
+            # the loader's startup banner prints. We don't need rpath on it
+            # anyway: musl's libc has no DT_NEEDED entries (self-contained),
+            # and the loader resolves downstream libs via its own search.
+            case "$base" in
+                libc.so|libc.musl-*|ld-musl-*)
+                    echo "Skipping rpath patch on musl loader: $elf_file"
+                    continue
+                    ;;
+            esac
+
             elf_dir=$(dirname "$elf_file")
             rel_shared=$(realpath --relative-to="$elf_dir" "$shared_lib_dir")
             rel_python=$(realpath --relative-to="$elf_dir" "$python_lib_dir")
