@@ -101,6 +101,11 @@ FROM base_builder AS tcl_builder
 COPY ["common/build/deplib/build_tcl.sh", "."]
 RUN set -eux && ./build_tcl.sh
 
+# =========== tk (GUI toolkit; _tkinter links libtk8.6.so) ===========
+FROM tcl_builder AS tk_builder
+COPY ["common/build/deplib/build_tk.sh", "."]
+RUN set -eux && ./build_tk.sh
+
 # =========== bzip2 ===========
 FROM base_builder AS bzip2_builder
 COPY ["common/build/deplib/build_bzip2.sh", "."]
@@ -126,6 +131,7 @@ COPY --from=ncurses_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=openssl_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=readline_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=tcl_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=tk_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=bzip2_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=sqlite3_builder /opt/shared_libraries /opt/shared_libraries
 
