@@ -35,7 +35,10 @@ export LDFLAGS="${LDFLAGS:--Wl},--strip-all"
 
 # 2.7's setup.py scans CPPFLAGS/LDFLAGS to find OpenSSL / sqlite / ncurses /
 # etc. Point those at the shipped prefix so OpenSSL 1.1.1w is discovered.
-export LOCAL_INCLUDES="-I/opt/shared_libraries/include/ncurses"
+# Our ncurses is built with --enable-widec (ncurses 6.x default), so
+# headers live under `include/ncursesw/` and libraries are `libncursesw*`.
+# Without the ncursesw include setup.py silently skips building `_curses`.
+export LOCAL_INCLUDES="-I/opt/shared_libraries/include/ncursesw"
 export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/"
 export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES}"
 export CPPFLAGS="${CPPFLAGS} ${LOCAL_INCLUDES}"

@@ -26,11 +26,15 @@ jobs: {
                 "run": "docker build -f ./${{ matrix.version }}/${{ matrix.architecture }}/Dockerfile -t release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} .",
             },
             {
-                "name": "Smoke test python and pip in final image",
-                "run": "IMPORTS='import ssl, sqlite3, ctypes'; \
-                    if [ '${{ matrix.version }}' != '2.7' ]; then IMPORTS=\"$IMPORTS, lzma\"; fi; \
-                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/python -c \"$IMPORTS; print('ok')\" && \
-                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip --version",
+                "name": "pip version",
+                "run": "docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip --version",
+            },
+            {
+                "name": "Cross-version stdlib smoke",
+                "run": "docker run --rm \
+                    -v \"${{ github.workspace }}/ci/smoke_stdlib.py:/tmp/smoke_stdlib.py:ro\" \
+                    release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} \
+                    /opt/python/bin/python /tmp/smoke_stdlib.py",
             },
             {
                 "name": "psutil compatibility smoke test (Py3 only)",

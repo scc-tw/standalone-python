@@ -18,14 +18,17 @@ build:
     - (sudo apt-get update -y && sudo apt-get install -y gzip) || true
   script:
     - docker build -f ./${version}/${architecture}/Dockerfile -t release-${PACKAGE_NAME}:${version}-${architecture} . 1>${version}-${architecture}.log 2>&1
-    # lzma is Py3-only stdlib, so strip it from the import list for 2.7.
-    # Everything else is common across 2/3.
-    - |
-      IMPORTS='import ssl, sqlite3, ctypes'
-      if [ "$version" != "2.7" ]; then IMPORTS="$IMPORTS, lzma"; fi
-      docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} \
-        /opt/python/bin/python -c "$IMPORTS; print('ok')"
     - docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} /opt/python/bin/pip --version
+    # Cross-version stdlib smoke. Exercises ssl (OpenSSL), hashlib digests,
+    # sqlite3, zlib, bz2, lzma (Py3-only; self-skips on 2.7), ctypes, curses,
+    # readline, socket, subprocess, threading, json. Exits non-zero if any
+    # section fails, so CI catches regressions in the shipped libc / deplib
+    # chain without us having to keep the inline check in sync by hand.
+    - |
+      docker run --rm \
+        -v "${CI_PROJECT_DIR}/ci/smoke_stdlib.py:/tmp/smoke_stdlib.py:ro" \
+        release-${PACKAGE_NAME}:${version}-${architecture} \
+        /opt/python/bin/python /tmp/smoke_stdlib.py
     # End-to-end compatibility check: install a native-extension wheel from
     # PyPI (exercises the musllinux tag hook) and run a broad surface-area
     # smoke test against the shipped libc / /proc / subprocess plumbing.
