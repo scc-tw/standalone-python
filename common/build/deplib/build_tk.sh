@@ -54,27 +54,51 @@ make -j $(nproc) && make install
 # KNOWN LIMITATION / TODO — X11 is NOT built from source (yet)
 # -----------------------------------------------------------------------
 # This `cp -a`-from-Alpine approach is a pragmatic deviation from the
-# project's "build everything from source with musl" principle. It keeps
-# the CI smoke test (`ci/smoke_tkinter.py` — headless, no display, no
-# drawing) green, but falls short for real GUI use:
+# project's "build everything from source with musl" principle. The
+# tkinter CI smoke (`ci/smoke_tkinter.py`) is intentionally marked
+# non-blocking (continue-on-error in .github/workflows/build.yml,
+# `|| echo` in .gitlab-ci.yml) so the rest of the build pipeline keeps
+# reporting useful signal while the full X11 stack remains unfinished.
 #
-#   * No `/etc/fonts/fonts.conf` and no font files are shipped.
-#     fontconfig will warn and "no fonts available" surfaces the moment
-#     Tk tries to render text. On a Debian-slim final image with no host
-#     fontconfig package, a real `Tk()` window cannot draw labels.
-#   * No `/usr/share/X11/locale/` is shipped → XmbLookupString / i18n
-#     input paths degrade to C locale fallback.
-#   * Transitive ELF deps beyond the 8 names below may not all be
-#     captured (e.g. libpng → freetype; expat SONAME alignment with the
-#     Alpine-built fontconfig vs our own build_expat.sh output).
+# --- Confirmed failures observed on Debian-slim final image ---
+# 1. `import _tkinter` → ImportError: libbz2.so.1 not found, needed by
+#    our copied libfreetype.so.6.
+#    Root cause: build_bzip2.sh only produces static libbz2.a; no
+#    libbz2.so* is ever installed into /opt/shared_libraries/lib/.
+#    Alpine's libfreetype has DT_NEEDED=libbz2.so.1 → dlopen fails.
 #
-# The proper fix is to add build scripts for the full stack:
-#   libXau, libXdmcp, xcb-proto (py), libxcb, xtrans, xorgproto, libX11,
-#   libXrender, libXext, libpng, libfreetype, libfontconfig, libXft
-# plus ship a minimal `/opt/shared_libraries/etc/fonts/fonts.conf`
-# and a small font set (e.g. DejaVu subset), and set FONTCONFIG_PATH /
-# FONTCONFIG_FILE in launcher.c. Estimated ~10 scripts + ~1–2 days.
-# Tracked informally here until promoted to a real issue.
+# --- Predicted follow-on failures (not yet hit because we fail fast
+#     on #1, but will surface once #1 is fixed) ---
+# 2. libfreetype.so.6 also has DT_NEEDED=libpng.so.16; we build no
+#    libpng at all. Needs a new build_libpng.sh.
+# 3. libfontconfig.so.1 needs libexpat.so.1 at a specific SONAME.
+#    We build expat (build_expat.sh) but the SONAME emitted by our
+#    build may not match what Alpine's libfontconfig was linked to.
+#    Needs `readelf -d` check.
+# 4. Actual GUI use (`Tk()` + `Label(text=...).pack()`):
+#      a. No `/etc/fonts/fonts.conf` on final image → fontconfig
+#         warns and falls back; on a Debian-slim base without the
+#         fontconfig package, no font is found → render errors.
+#      b. No font files shipped (e.g. DejaVu sans / Noto) →
+#         fontconfig has nothing to serve even with a valid config.
+#      c. No `/usr/share/X11/locale/` → XmbLookupString / i18n input
+#         path degrades to C locale.
+#
+# --- Proper fix (Option A in the design discussion) ---
+# Replace this `cp -a` block with real from-source builds, in order:
+#     libXau, libXdmcp, xcb-proto (python module), libxcb,
+#     xtrans (headers), xorgproto (headers), libX11, libXext,
+#     libXrender, libpng, libfreetype (relink against our libpng
+#     + our libbz2.so.1 after build_bzip2.sh ships a shared version),
+#     libfontconfig (against our expat + freetype), libXft.
+# Plus:
+#     - ship `/opt/shared_libraries/etc/fonts/fonts.conf`
+#     - ship a minimal font subset (e.g. DejaVu sans ~1–2 MB)
+#     - set FONTCONFIG_PATH / FONTCONFIG_FILE in launcher.c so
+#       fontconfig finds the shipped config/fonts first
+# Estimated ~10 build scripts + font/config shipping, ~1–2 days.
+#
+# Tracked informally here until promoted to a real GitHub issue.
 # -----------------------------------------------------------------------
 for name in X11 Xft Xrender Xau Xdmcp xcb fontconfig freetype; do
     found=0
