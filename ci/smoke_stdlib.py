@@ -136,11 +136,15 @@ def s_ctypes():
 @section("curses")
 def s_curses():
     # Don't call initscr() — that needs a real tty. Just confirm the C
-    # extension loads and exposes the expected symbols.
+    # extension loads and exposes module-level symbols. ACS_* / COLS /
+    # LINES and friends are populated by initscr() (they come from the
+    # terminfo ACS map), so we stick to things that exist at import time.
     import curses
     assert hasattr(curses, "initscr")
     assert hasattr(curses, "color_pair")
-    assert hasattr(curses, "ACS_HLINE")
+    assert hasattr(curses, "error")     # module-level exception class
+    assert hasattr(curses, "KEY_UP")    # module-level key constant
+    assert hasattr(curses, "A_NORMAL")  # module-level attribute constant
     # panel is a separate extension (_curses_panel); check both.
     import curses.panel
     assert hasattr(curses.panel, "new_panel")
