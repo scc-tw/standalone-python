@@ -54,6 +54,7 @@ export LDFLAGS="${LDFLAGS} -L/opt/shared_libraries/lib -Wl,-rpath,/opt/shared_li
     --enable-option-checking=fatal \
     --enable-shared \
     --enable-unicode=ucs4 \
+    --with-dbmliborder=gdbm:ndbm \
     --prefix="$INSTALL_PREFIX"
 
 make -j $(nproc)

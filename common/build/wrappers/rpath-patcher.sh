@@ -45,13 +45,21 @@ patch_elf_rpath() {
     shared_lib_dir=/opt/python/shared_libraries/lib
     python_lib_dir=/opt/python/lib
 
-    # Cover both `bin/` binaries (python*-real, pip*-real, pure C helpers
-    # like python-config) and `lib-dynload/` C extensions (_ssl.so,
-    # _hashlib.so, _ctypes.so, …). lib-dynload/*.so isn't marked
-    # executable, so drop the -executable filter and let the ELF-magic
-    # grep do the filtering instead.
+    # Cover every ELF we ship:
+    #   * `bin/*`              python*-real, pip*-real, python-config, …
+    #   * `*/lib-dynload/*`    C extensions (_ssl, _curses, _ctypes, …)
+    #   * `*.so` / `*.so.*`    libpython3.N.so.1.0 and any other shared libs
+    #                          (libpython picks up the LDFLAGS rpath too, so
+    #                          we rewrite it here to keep the install
+    #                          relocatable).
+    # Name-based pre-filter avoids running `file` on thousands of .py files
+    # under lib/python*/; the ELF-magic grep still filters anything that
+    # slips through.
     find /opt/python -type f \
-         \( -path "*/bin/*" -o -path "*/lib-dynload/*" \) \
+         \( -path "*/bin/*" \
+            -o -path "*/lib-dynload/*" \
+            -o -name "*.so" \
+            -o -name "*.so.*" \) \
          -exec file {} \; \
         | grep 'ELF' | grep 'dynamically linked' | cut -d: -f1 \
         | while read -r elf_file; do

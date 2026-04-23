@@ -21,7 +21,15 @@ export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/" # som
 
 export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES}"
 export CPPFLAGS="${CPPFLAGS} ${LOCAL_INCLUDES}"
-export LDFLAGS="${LDFLAGS} -L/opt/shared_libraries/lib -lffi"
+# Bake an absolute rpath to /opt/shared_libraries/lib into every C extension
+# linked during this build. --with-openssl-rpath=auto only handles OpenSSL;
+# other extensions (_curses→libtinfo, _sqlite3→libsqlite3, readline→libreadline,
+# _ctypes→libffi, …) have no CPython-level flag to set their rpath, so
+# without this the build's own `sysconfig --generate-posix-vars` import test
+# fails with "Error loading shared library libtinfo.so.6: No such file".
+# rpath-patcher.sh rewrites this to $ORIGIN-relative after packing, so the
+# final image stays relocatable.
+export LDFLAGS="${LDFLAGS} -L/opt/shared_libraries/lib -lffi -Wl,-rpath,/opt/shared_libraries/lib"
 
 # Free-threaded build (PEP 703 / "no-GIL"), added in Python 3.13. Enabled
 # per-Dockerfile with `ENV DISABLE_GIL=1` in the python_builder stage. The
@@ -37,6 +45,7 @@ fi
 ./configure --build="$gnuArch" --enable-loadable-sqlite-extensions \
     --enable-optimizations --enable-option-checking=fatal --enable-shared \
     --with-lto --with-system-expat --without-ensurepip \
+    --with-dbmliborder=gdbm:ndbm \
     --prefix="$INSTALL_PREFIX" --with-openssl-rpath=auto \
     --with-openssl=/opt/shared_libraries \
     $CONFIGURE_EXTRA
