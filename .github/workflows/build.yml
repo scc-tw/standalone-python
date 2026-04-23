@@ -13,7 +13,7 @@ jobs: {
         "strategy": {
             "matrix": {
                 "architecture": ["x86_64", "x86"],
-                "version": ["3.12", "3.11", "3.10"],
+                "version": ["3.12", "3.11", "3.10", "2.7"],
             },
         },
         "steps": [
@@ -27,15 +27,18 @@ jobs: {
             },
             {
                 "name": "Smoke test python and pip in final image",
-                "run": "docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/python3 -c 'import ssl, sqlite3, ctypes, lzma; print(\"ok\")' && \
-                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip3 --version",
+                "run": "IMPORTS='import ssl, sqlite3, ctypes'; \
+                    if [ '${{ matrix.version }}' != '2.7' ]; then IMPORTS=\"$IMPORTS, lzma\"; fi; \
+                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/python -c \"$IMPORTS; print('ok')\" && \
+                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip --version",
             },
             {
-                "name": "psutil compatibility smoke test",
+                "name": "psutil compatibility smoke test (Py3 only)",
+                "if": "matrix.version != '2.7'",
                 "run": "docker run --rm \
                     -v \"${{ github.workspace }}/ci/smoke_psutil.py:/tmp/smoke_psutil.py:ro\" \
                     release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} \
-                    sh -c '/opt/python/bin/pip3 install --quiet --no-cache-dir psutil && /opt/python/bin/python3 /tmp/smoke_psutil.py'",
+                    sh -c '/opt/python/bin/pip install --quiet --no-cache-dir psutil && /opt/python/bin/python /tmp/smoke_psutil.py'",
             },
             {
                 "name": "Save docker image as tar file",

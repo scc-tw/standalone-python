@@ -18,16 +18,25 @@ build:
     - (sudo apt-get update -y && sudo apt-get install -y gzip) || true
   script:
     - docker build -f ./${version}/${architecture}/Dockerfile -t release-${PACKAGE_NAME}:${version}-${architecture} . 1>${version}-${architecture}.log 2>&1
-    - docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} /opt/python/bin/python3 -c 'import ssl, sqlite3, ctypes, lzma; print("ok")'
-    - docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} /opt/python/bin/pip3 --version
+    # lzma is Py3-only stdlib, so strip it from the import list for 2.7.
+    # Everything else is common across 2/3.
+    - |
+      IMPORTS='import ssl, sqlite3, ctypes'
+      if [ "$version" != "2.7" ]; then IMPORTS="$IMPORTS, lzma"; fi
+      docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} \
+        /opt/python/bin/python -c "$IMPORTS; print('ok')"
+    - docker run --rm release-${PACKAGE_NAME}:${version}-${architecture} /opt/python/bin/pip --version
     # End-to-end compatibility check: install a native-extension wheel from
     # PyPI (exercises the musllinux tag hook) and run a broad surface-area
     # smoke test against the shipped libc / /proc / subprocess plumbing.
+    # smoke_psutil.py uses Py3-only syntax (f-strings), so skip it on 2.7.
     - |
-      docker run --rm \
-        -v "${CI_PROJECT_DIR}/ci/smoke_psutil.py:/tmp/smoke_psutil.py:ro" \
-        release-${PACKAGE_NAME}:${version}-${architecture} \
-        sh -c '/opt/python/bin/pip3 install --quiet --no-cache-dir psutil && /opt/python/bin/python3 /tmp/smoke_psutil.py'
+      if [ "$version" != "2.7" ]; then
+        docker run --rm \
+          -v "${CI_PROJECT_DIR}/ci/smoke_psutil.py:/tmp/smoke_psutil.py:ro" \
+          release-${PACKAGE_NAME}:${version}-${architecture} \
+          sh -c '/opt/python/bin/pip install --quiet --no-cache-dir psutil && /opt/python/bin/python /tmp/smoke_psutil.py'
+      fi
     - docker save release-${PACKAGE_NAME}:${version}-${architecture} > release-${version}-${architecture}.tar
     - bash ci/packing_release_tar.sh release-${version}-${architecture}.tar
     - gzip -9 build/release-${version}-${architecture}.tar
@@ -35,7 +44,7 @@ build:
     paths: ["build/release-${version}-${architecture}.tar.gz", "${version}-${architecture}.log"]
   parallel:
     matrix:
-      - version: ["3.12", "3.11", "3.10"]
+      - version: ["3.12", "3.11", "3.10", "2.7"]
         architecture: ["x86_64", "x86"]
   tags: [shell]
   rules:
@@ -68,7 +77,7 @@ upload:
       "${PACKAGE_REGISTRY_URL}${PACKAGE_NAME}/${PACKAGE_VERSION}/release-${version}-${architecture}.tar.gz?${GET_FILE_ATTR_MAGIC}" >> ${version}-${architecture}-result.txt
   parallel:
     matrix:
-      - version: ["3.12", "3.11", "3.10"]
+      - version: ["3.12", "3.11", "3.10", "2.7"]
         architecture: ["x86_64", "x86"]
   artifacts:
     paths: ["*-result.txt"]

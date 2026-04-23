@@ -206,10 +206,14 @@ int main(int argc, char **argv) {
     const char *argv0 = argv[0] ? argv[0] : "python";
     const char *argv0_base = path_basename(argv0);
 
-    /* Match exactly `pip`, `pip3`, or `pip3.<anything>` — not arbitrary
-     * names that happen to share a `pip3` prefix (e.g. `pip3-wrapper`). */
+    /* Match exactly `pip`, `pip2`, `pip3`, or `pip<major>.<anything>`.
+     * Arbitrary names that merely share a `pipN` prefix (e.g. `pip3-wrapper`)
+     * are NOT treated as pip — they'd be surprising and we'd fail to find
+     * a matching pip*-real anyway. */
     int is_pip = strcmp(argv0_base, "pip") == 0
+              || strcmp(argv0_base, "pip2") == 0
               || strcmp(argv0_base, "pip3") == 0
+              || strncmp(argv0_base, "pip2.", 5) == 0
               || strncmp(argv0_base, "pip3.", 5) == 0;
 
     /* Locate the real binaries. Python is always needed; pip additionally. */
@@ -230,9 +234,20 @@ int main(int argc, char **argv) {
      * pass the python launcher path (not the pip launcher path) so that pip's
      * build-isolation subprocess calls — which spawn [sys.executable,
      * __pip_runner__, ...] — go through the python dispatch instead of re-
-     * entering pip and failing with "unknown command __pip-runner__.py". */
+     * entering pip and failing with "unknown command __pip-runner__.py".
+     *
+     * Derive the launcher name from python_real's basename so the same
+     * binary works for Python 2 and Python 3 installs: `python3.12-real`
+     * → `python3`, `python2.7-real` → `python2`. The 7th byte (after the
+     * literal "python") is the major-version digit. */
+    const char *python_real_base = path_basename(python_real.data);
+    char python_major = '3';
+    if (strncmp(python_real_base, "python", 6) == 0
+            && python_real_base[6] >= '2' && python_real_base[6] <= '9') {
+        python_major = python_real_base[6];
+    }
     str python_launcher = {0};
-    str_setf(&python_launcher, "%s/python3", bin_dir.data);
+    str_setf(&python_launcher, "%s/python%c", bin_dir.data, python_major);
 
     /* Build new argv:
      *   python case: ld_so --argv0 <orig_argv0>      python_real           <argv[1..]>

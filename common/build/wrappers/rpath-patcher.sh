@@ -6,8 +6,16 @@ set -e
 # merged /opt/shared_libraries into /opt/python/shared_libraries, this script:
 #   1. copies the shipped musl runtime libs from the cross-build into
 #      /opt/python/shared_libraries/lib/ (so ld-musl-*.so.1 lives with Python)
-#   2. rewrites RPATH of every dynamically linked ELF under /opt/python/**/bin/
-#      so $ORIGIN-relative lookups resolve inside the installed tree.
+#   2. rewrites RPATH of every dynamically linked ELF under /opt/python/ — both
+#      the launcher-adjacent `bin/` binaries AND every C extension under
+#      `lib*/pythonX.Y/lib-dynload/` — so $ORIGIN-relative lookups resolve
+#      inside the installed tree regardless of where the install is moved.
+#
+# Patching lib-dynload is specifically required for Python 2.7 where
+# _hashlib.so and _ssl.so are built against the shipped OpenSSL; 2.7's
+# configure has no --with-openssl-rpath, so the build bakes an absolute
+# /opt/shared_libraries/lib rpath that would dangle after packing moves
+# it to /opt/python/shared_libraries/lib.
 #
 # No .interp patching is done — the launcher invokes the shipped ld-musl.so.1
 # directly via execve, so python-real's .interp is never consulted by the
@@ -37,7 +45,14 @@ patch_elf_rpath() {
     shared_lib_dir=/opt/python/shared_libraries/lib
     python_lib_dir=/opt/python/lib
 
-    find /opt/python -type f -path "*bin/*" -executable -exec file {} \; \
+    # Cover both `bin/` binaries (python*-real, pip*-real, pure C helpers
+    # like python-config) and `lib-dynload/` C extensions (_ssl.so,
+    # _hashlib.so, _ctypes.so, …). lib-dynload/*.so isn't marked
+    # executable, so drop the -executable filter and let the ELF-magic
+    # grep do the filtering instead.
+    find /opt/python -type f \
+         \( -path "*/bin/*" -o -path "*/lib-dynload/*" \) \
+         -exec file {} \; \
         | grep 'ELF' | grep 'dynamically linked' | cut -d: -f1 \
         | while read -r elf_file; do
             elf_file=$(realpath "$elf_file")

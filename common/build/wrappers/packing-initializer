@@ -3,10 +3,13 @@
 set -e
 
 python_renamer(){
-    # find some python3.* under /opt/python/bin and rename it to python3.(\1)-real
-    find /opt/python/bin -type f -executable -name 'python3.*' -not -name '*-real' -not -name "*-config" | while read -r line; do
+    # Rename python2.* / python3.* (the real interpreter) to python*-real so
+    # the launcher can be installed at the canonical name.
+    find /opt/python/bin -type f -executable -name 'python[23].*' \
+         -not -name '*-real' -not -name '*-config' | while read -r line; do
         echo "Renaming $line"
-        mv "$line" "$(echo "$line" | sed -r 's/python3\.(.*)/python3.\1-real/g')" || (echo "Failed to rename $line" && exit 1)
+        mv "$line" "$(echo "$line" | sed -r 's/python([23])\.(.*)$/python\1.\2-real/')" \
+            || (echo "Failed to rename $line" && exit 1)
     done
 
     # Echo the result
@@ -16,10 +19,13 @@ python_renamer(){
 }
 
 pip_renamer() {
-    # find some pip3.* under /opt/python/bin and rename it to pip3.(\1)-real
-    find /opt/python/bin -type f -executable -name 'pip3.*' -not -name '*-real' | while read -r line; do
+    # Rename pip2.* / pip3.* (the real pip script) to pip*-real so the
+    # launcher can be installed at the canonical name.
+    find /opt/python/bin -type f -executable -name 'pip[23].*' \
+         -not -name '*-real' | while read -r line; do
         echo "Renaming $line"
-        mv "$line" "$(echo "$line" | sed -r 's/pip3\.(.*)/pip3.\1-real/g')" || (echo "Failed to rename $line" && exit 1)
+        mv "$line" "$(echo "$line" | sed -r 's/pip([23])\.(.*)$/pip\1.\2-real/')" \
+            || (echo "Failed to rename $line" && exit 1)
     done
 
     # Echo the result
@@ -35,14 +41,29 @@ shared_libraries_mover() {
 
 shebang_rewriter() {
     # `make install` drops helper scripts into /opt/python/bin (idle3.12,
-    # 2to3-3.12, python3.12-config, pydoc3.12, pip3.12, ...) with shebangs
+    # 2to3-3.12, python3.12-config, pydoc3.12, pip3.12, etc.) with shebangs
     # pointing at the original python binary (e.g. /opt/python/bin/python3.12).
     # python_renamer just moved that binary to *-real, so those shebangs now
     # dangle. Retarget every shebang in /opt/python/bin that points at the
-    # old python/pip paths to /opt/python/bin/python3 — the launcher, which
-    # a later build step installs at that path. The launcher dispatches on
+    # old python/pip paths to the launcher path that a later build step
+    # installs (/opt/python/bin/python<major>). The launcher dispatches on
     # argv[0] basename, so running these scripts through it behaves as
     # python-mode invocation (argv[1] = script).
+    #
+    # The major version is whichever python*-real this build produced, so
+    # the same logic works for both the Python 2 and Python 3 layouts.
+    target_python=""
+    for f in /opt/python/bin/python*-real; do
+        case "$(basename "$f")" in
+            python2.*) target_python="/opt/python/bin/python2" ;;
+            python3.*) target_python="/opt/python/bin/python3" ;;
+        esac
+    done
+    if [ -z "$target_python" ]; then
+        echo "shebang_rewriter: no python*-real found, skipping"
+        return
+    fi
+
     for f in /opt/python/bin/*; do
         [ -f "$f" ] || continue
         # Only text scripts have `#!` as the first two bytes; skip ELFs.
@@ -53,8 +74,8 @@ shebang_rewriter() {
             '#!/opt/python/bin/python'*|'#!/opt/python/bin/pip'*)
                 # Replace just the interpreter path (everything up to the
                 # first whitespace). Trailing flags like ` -E` are preserved.
-                sed -i '1 s|^#![^[:space:]]*|#!/opt/python/bin/python3|' "$f"
-                echo "Rewrote shebang: $f"
+                sed -i "1 s|^#![^[:space:]]*|#!${target_python}|" "$f"
+                echo "Rewrote shebang: $f -> #!${target_python}"
                 ;;
         esac
     done
