@@ -26,6 +26,11 @@ jobs: {
                 "run": "docker build -f ./${{ matrix.version }}/${{ matrix.architecture }}/Dockerfile -t release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} .",
             },
             {
+                "name": "Smoke test python and pip in final image",
+                "run": "docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/python3 -c 'import ssl, sqlite3, ctypes, lzma; print(\"ok\")' && \
+                    docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip3 --version",
+            },
+            {
                 "name": "Save docker image as tar file",
                 "run": "docker save release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} > release-${{ matrix.version }}-${{ matrix.architecture }}.tar",
             },

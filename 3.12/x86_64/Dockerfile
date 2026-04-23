@@ -113,6 +113,17 @@ FROM sqlite3_builder AS python_builder
 COPY ["common/build/deplib/build_python.sh", "common/build/deplib/install_pip.sh", "."]
 RUN set -eux && ./build_python.sh && ./install_pip.sh
 
+# =========== launcher (static C binary, replaces shell wrappers) ===========
+FROM musl_builder AS launcher_builder
+ENV MUSL_ARCH=x86_64
+WORKDIR /src
+COPY ["common/build/wrappers/launcher.c", "./launcher.c"]
+RUN set -eux && \
+    /opt/musl/bin/${MUSL_ARCH}-linux-musl-gcc -static -Os -s \
+        -DMUSL_ARCH="\"${MUSL_ARCH}\"" \
+        launcher.c -o launcher && \
+    file launcher
+
 # =========== patch_stage ===========
 FROM --platform=${TARGETPLATFORM} debian:latest AS patch_stage
 ARG DEBIAN_FRONTEND=noninteractive
@@ -124,18 +135,23 @@ RUN apt-get update -y && apt-get install -y patchelf file
 COPY --from=python_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=python_builder /opt/python /opt/python
 
-COPY ["common/build/wrappers/packing-initializer", "common/build/wrappers/python-wrapper", "common/build/wrappers/pip-wrapper", "."]
-RUN ./packing-initializer && rm -rf packing-initializer && \
-    mv python-wrapper /opt/python/bin/python3 && \
-    mv pip-wrapper /opt/python/bin/pip3 && \
-    cd  /opt/python/bin && \
+COPY ["common/build/wrappers/packing-initializer", "."]
+RUN ./packing-initializer && rm -rf packing-initializer
+
+COPY --from=launcher_builder /src/launcher /tmp/launcher
+RUN install -m 0755 /tmp/launcher /opt/python/bin/python3 && \
+    install -m 0755 /tmp/launcher /opt/python/bin/pip3 && \
+    rm /tmp/launcher && \
+    cd /opt/python/bin && \
     ln -sf python3 python && \
     ln -sf pip3 pip
 
-# Patch the generated python and related dynamic libraries
+# Copy shipped musl runtime and rewrite RPATH on Python's bundled ELFs so
+# $ORIGIN-relative lookups resolve inside the installed tree. No .interp
+# patching is needed — the static launcher invokes ld-musl.so directly.
 COPY --from=musl_builder /opt/musl /opt/musl
-COPY ["common/build/wrappers/interpreter-patcher.sh", "."]
-RUN set -eux && ./interpreter-patcher.sh
+COPY ["common/build/wrappers/rpath-patcher.sh", "."]
+RUN set -eux && ./rpath-patcher.sh
 
 # =========== final ===========
 FROM --platform=${TARGETPLATFORM} debian:latest AS final

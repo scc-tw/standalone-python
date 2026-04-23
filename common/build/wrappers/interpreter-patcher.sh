@@ -3,7 +3,7 @@
 set -e
 
 # The packing-initializer had merge /opt/shared_library into /opt/python/shared_libraries
-# So, this script we 
+# So, this script we
 # 1. patch all ELF file's interpreter to out relative musl interpreter
 # 2. move all /opt/musl/*-musl/lib/ to /opt/python/shared_libraries/lib/
 
