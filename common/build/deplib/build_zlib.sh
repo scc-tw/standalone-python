@@ -4,10 +4,18 @@
 # dynamic linking libz.so and libz.so.1 are required.
 
 set -e
-export ZLIB_VERSION=${ZLIB_VERSION:-1.3.1}
+. ./_fetch.sh
 
-wget https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz
-tar -xzf zlib-${ZLIB_VERSION}.tar.gz && cd zlib-${ZLIB_VERSION}
+export ZLIB_VERSION=${ZLIB_VERSION:-1.3.1}
+tarball="zlib-${ZLIB_VERSION}.tar.gz"
+
+# GitHub releases is canonical; zlib.net keeps previous releases under
+# /fossils/. zlib.net's root path only hosts the *current* release.
+fetch_mirrored "$tarball" \
+    "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/${tarball}" \
+    "https://www.zlib.net/fossils/${tarball}"
+
+tar -xzf "$tarball" && cd "zlib-${ZLIB_VERSION}"
 
 ./configure --prefix=/opt/shared_libraries
 make -j $(nproc) && make install

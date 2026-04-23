@@ -37,6 +37,8 @@ RUN set -eux && apk add --no-cache ca-certificates tzdata && \
         libc-dev libnsl-dev libtirpc-dev linux-headers make pax-utils tk tk-dev util-linux-dev wget \
         bison flex gawk patch
 
+COPY ["common/build/deplib/_fetch.sh", "."]
+
 # =========== musl ===========
 FROM --platform=linux/386 debian:bookworm AS musl_builder
 ARG DEBIAN_FRONTEND=noninteractive

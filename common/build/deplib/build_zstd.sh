@@ -11,10 +11,16 @@
 # there for the shipped tree.
 
 set -e
-export ZSTD_VERSION=${ZSTD_VERSION:-1.5.6}
+. ./_fetch.sh
 
-wget https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz
-tar -xzf zstd-${ZSTD_VERSION}.tar.gz && cd zstd-${ZSTD_VERSION}
+export ZSTD_VERSION=${ZSTD_VERSION:-1.5.6}
+tarball="zstd-${ZSTD_VERSION}.tar.gz"
+
+# GitHub releases is the canonical source; retry+backoff via _fetch.sh.
+fetch_mirrored "$tarball" \
+    "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/${tarball}"
+
+tar -xzf "$tarball" && cd "zstd-${ZSTD_VERSION}"
 
 make -C lib -j $(nproc) PREFIX=/opt/shared_libraries
 make -C lib install PREFIX=/opt/shared_libraries

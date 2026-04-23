@@ -1,11 +1,17 @@
 #!/bin/sh
 
+set -e
+. ./_fetch.sh
+
 export INSTALL_PREFIX=/opt/python
 export gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
 
+tarball="Python-${PYTHON_VERSION}.tar.xz"
 
-wget -O Python-$PYTHON_VERSION.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz"
-tar -xvf Python-$PYTHON_VERSION.tar.xz && cd Python-$PYTHON_VERSION
+fetch_mirrored "$tarball" \
+    "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/${tarball}"
+
+tar -xvf "$tarball" && cd "Python-${PYTHON_VERSION}"
 
 
 export EXTRA_CFLAGS="-DTHREAD_STACK_SIZE=0x100000"

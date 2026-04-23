@@ -10,13 +10,21 @@
 # resolves it $ORIGIN-relative inside the shipped tree.
 
 set -e
+. ./_fetch.sh
+
 export UUID_VERSION=${UUID_VERSION:-2.40.4}
-
-# Source path is /v<MAJOR.MINOR>/util-linux-<MAJOR.MINOR.PATCH>.tar.xz
 UUID_BRANCH=${UUID_VERSION%.*}
+tarball="util-linux-${UUID_VERSION}.tar.xz"
 
-wget https://www.kernel.org/pub/linux/utils/util-linux/v${UUID_BRANCH}/util-linux-${UUID_VERSION}.tar.xz
-tar -xJf util-linux-${UUID_VERSION}.tar.xz && cd util-linux-${UUID_VERSION}
+# kernel.org primary; mirrors.edge.kernel.org is the CDN-fronted mirror
+# with identical layout. The GitHub tag archive uses a different top-dir
+# and ships no pre-built configure, so it's not a drop-in substitute.
+# Verified 2026-04-23.
+fetch_mirrored "$tarball" \
+    "https://www.kernel.org/pub/linux/utils/util-linux/v${UUID_BRANCH}/${tarball}" \
+    "https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v${UUID_BRANCH}/${tarball}"
+
+tar -xJf "$tarball" && cd "util-linux-${UUID_VERSION}"
 
 ./configure --prefix=/opt/shared_libraries \
     --disable-all-programs --enable-libuuid \
