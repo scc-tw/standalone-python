@@ -2,7 +2,6 @@ FROM --platform=linux/amd64 alpine:3.22 AS base_builder
 
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    PYTHON_VERSION=3.10.20 \
     IS_32BIT=0 \
     ZLIB_VERSION=1.3.2 \
     FFI_VERSION=3.5.2 \
@@ -19,10 +18,7 @@ ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
     UUID_VERSION=2.40.4 \
     SQLITE_VERSION=3530000 \
     SQLITE_VERSION_LITERIAL=3.53.0 \
-    SQLITE_YEAR=2026 \
-    PYTHON_PIP_VERSION=26.0.1 \
-    PYTHON_SETUPTOOLS_VERSION=82.0.1
-
+    SQLITE_YEAR=2026
 WORKDIR /src
 RUN set -eux && apk add --no-cache ca-certificates tzdata && \
     apk add --no-cache --virtual .build-deps tar xz bluez-dev dpkg-dev dpkg findutils gcc file g++ \
@@ -114,6 +110,9 @@ RUN set -eux && ./build_sqlite3.sh
 
 # =========== Python ===========
 FROM sqlite3_builder AS python_builder
+ENV PYTHON_VERSION=3.10.20 \
+    PYTHON_PIP_VERSION=26.0.1 \
+    PYTHON_SETUPTOOLS_VERSION=82.0.1
 
 COPY ["common/build/deplib/build_python.sh", "common/build/deplib/install_pip.sh", "."]
 RUN set -eux && ./build_python.sh && ./install_pip.sh
