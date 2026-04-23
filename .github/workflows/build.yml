@@ -23,7 +23,7 @@ jobs: {
             },
             {
                 "name": "Build docker image",
-                "run": "docker build -t release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} ./${{ matrix.version }}/${{ matrix.architecture }}/",
+                "run": "docker build -f ./${{ matrix.version }}/${{ matrix.architecture }}/Dockerfile -t release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} .",
             },
             {
                 "name": "Save docker image as tar file",

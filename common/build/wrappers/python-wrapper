@@ -1,0 +1,92 @@
+#!/bin/sh
+
+set -e
+
+# Source architecture detection
+SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+if [ -f "$SCRIPT_DIR/../lib/arch_detect.sh" ]; then
+    . "$SCRIPT_DIR/../lib/arch_detect.sh"
+fi
+
+# Function to get architecture-specific musl interpreter path
+get_magic_libc_path() {
+    if [ -n "$MUSL_INTERPRETER_PATH" ]; then
+        # Allow override via environment
+        echo "$MUSL_INTERPRETER_PATH"
+    elif type get_musl_interpreter >/dev/null 2>&1; then
+        # Use function from arch_detect.sh if available
+        get_musl_interpreter
+    else
+        # Fallback to auto-detection
+        case $(uname -m) in
+            x86_64)
+                echo "/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so"
+                ;;
+            i386|i686)
+                echo "/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-i386.so"
+                ;;
+            *)
+                echo "/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-unknown.so"
+                ;;
+        esac
+    fi
+}
+
+# Function to find the real python executable
+find_real_python() {
+    find "$INSTALL_PREFIX/bin" -type f -executable -name 'python*-real' -perm 444 | head -n 1
+}
+
+# check magic_bootstraping_libc_path is same as $INSTALL_PREFIX/shared_libraries/lib/libc.so
+# if not, copy it to magic_bootstraping_libc_path
+bootstraping_libc() {
+    if [ ! -f "$magic_bootstraping_libc_path" ]; then
+        cp "$INSTALL_PREFIX/shared_libraries/lib/libc.so" "$magic_bootstraping_libc_path"
+    fi
+    if ! cmp -s "$INSTALL_PREFIX/shared_libraries/lib/libc.so" "$magic_bootstraping_libc_path"; then
+        cp "$INSTALL_PREFIX/shared_libraries/lib/libc.so" "$magic_bootstraping_libc_path"
+    fi
+}
+
+# Function to set up environment variables
+setup_environment() {
+    export SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+    export INSTALL_PREFIX="$SCRIPT_DIR/../"
+
+    # Find the REAL_PYTHON
+    export REAL_PYTHON=$(find_real_python)
+
+    # Set PYTHONPATH and backup PYTHONPATH
+    export PYTHONPATH_BACKUP=$PYTHONPATH
+
+    # Find python version from REAL_PYTHON
+    PYTHON_VERSION=$(echo "$REAL_PYTHON" | grep -o -E '[0-9]+\.[0-9]+')
+    export PYTHONPATH="$INSTALL_PREFIX/lib/python$PYTHON_VERSION/site-packages"
+    PYTHON_VERSION=
+
+    # Set PYTHONHOME to the install prefix
+    export PYTHONHOME_BACKUP=$PYTHONHOME
+    export PYTHONHOME=$INSTALL_PREFIX
+
+    # set bootstraping libc
+    bootstraping_libc
+}
+
+# Function to invoke the real python
+invoke_real_python() {
+    "$REAL_PYTHON" "$@"
+}
+
+# Function to restore environment variables
+restore_environment() {
+    export PYTHONHOME=$PYTHONHOME_BACKUP
+    export PYTHONPATH=$PYTHONPATH_BACKUP
+}
+
+# Main script
+# Get architecture-specific musl interpreter path
+magic_bootstraping_libc_path=$(get_magic_libc_path)
+
+setup_environment
+invoke_real_python "$@"
+restore_environment

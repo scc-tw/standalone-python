@@ -1,8 +1,10 @@
-FROM alpine:3.18.3 as base_builder
+ARG TARGETPLATFORM=linux/amd64
+FROM --platform=${TARGETPLATFORM} alpine:3.18.3 AS base_builder
 
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    PYTHON_VERSION=3.11.9
+    PYTHON_VERSION=3.11.9 \
+    IS_32BIT=0
 
 WORKDIR /src
 RUN set -eux && apk add --no-cache ca-certificates tzdata && \
@@ -11,99 +13,101 @@ RUN set -eux && apk add --no-cache ca-certificates tzdata && \
         bison flex gawk patch
 
 # # =========== musl ===========
-FROM debian:bookworm as musl_builder
+FROM --platform=${TARGETPLATFORM} debian:bookworm AS musl_builder
 ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Taipei
+ENV TZ=Asia/Taipei \
+    IS_32BIT=0
 
 RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y build-essential wget git file tar xz-utils dpkg-dev libnsl-dev libtirpc-dev uuid-dev patch
 
 WORKDIR /src
-COPY ["./deplib/build_musl.sh", "./deplib/config.mak", "."]
+COPY ["common/build/deplib/build_musl.sh", "3.11/x86_64/deplib/config.mak", "."]
 RUN set -eux && ./build_musl.sh
 
 # =========== libz ===========
-FROM base_builder as libz_builder
-COPY ["./deplib/build_zlib.sh", "."]
+FROM base_builder AS libz_builder
+COPY ["common/build/deplib/build_zlib.sh", "."]
 RUN set -eux && ./build_zlib.sh
 
 # =========== ffi ===========
-FROM libz_builder as ffi_builder
-COPY ["./deplib/build_ffi.sh", "."]
+FROM libz_builder AS ffi_builder
+COPY ["common/build/deplib/build_ffi.sh", "."]
 RUN set -eux && ./build_ffi.sh
 
 # =========== expat ===========
-FROM ffi_builder as expat_builder
-COPY ["./deplib/build_expat.sh", "."]
+FROM ffi_builder AS expat_builder
+COPY ["common/build/deplib/build_expat.sh", "."]
 RUN set -eux && ./build_expat.sh
 
 # =========== gdbm ===========
-FROM expat_builder as gdbm_builder
-COPY ["./deplib/build_gdbm.sh", "."]
+FROM expat_builder AS gdbm_builder
+COPY ["common/build/deplib/build_gdbm.sh", "."]
 RUN set -eux && ./build_gdbm.sh
 
 # =========== lzma ===========
-FROM gdbm_builder as lzma_builder
-COPY ["./deplib/build_lzma.sh", "."]
+FROM gdbm_builder AS lzma_builder
+COPY ["common/build/deplib/build_lzma.sh", "."]
 RUN set -eux && ./build_lzma.sh
 
 # =========== gettext ===========
-FROM lzma_builder as gettext_builder
-COPY ["./deplib/build_gettext.sh", "."]
+FROM lzma_builder AS gettext_builder
+COPY ["common/build/deplib/build_gettext.sh", "."]
 RUN set -eux && ./build_gettext.sh
 
 # =========== ncurses ===========
-FROM gettext_builder as ncurses_builder
-COPY ["./deplib/build_ncurses.sh", "."]
+FROM gettext_builder AS ncurses_builder
+COPY ["common/build/deplib/build_ncurses.sh", "."]
 RUN set -eux && ./build_ncurses.sh
 
 # =========== openssl ===========
-FROM ncurses_builder as openssl_builder
-COPY ["./deplib/build_openssl.sh", "."]
+FROM ncurses_builder AS openssl_builder
+COPY ["common/build/deplib/build_openssl.sh", "."]
 RUN set -eux && ./build_openssl.sh
 
 # =========== readline ===========
-FROM openssl_builder as readline_builder
-COPY ["./deplib/build_readline.sh", "./deplib/patch/fix-ncurses-underlinking.patch",  "."]
+FROM openssl_builder AS readline_builder
+COPY ["common/build/deplib/build_readline.sh", "common/patches/common/ncurses/fix-ncurses-underlinking.patch", "."]
 RUN set -eux && ./build_readline.sh
 
 # =========== tcl ===========
-FROM readline_builder as tcl_builder
-COPY ["./deplib/build_tcl.sh", "."]
+FROM readline_builder AS tcl_builder
+COPY ["common/build/deplib/build_tcl.sh", "."]
 RUN set -eux && ./build_tcl.sh
 
 # =========== xz ===========
-FROM tcl_builder as xz_builder
-COPY ["./deplib/build_xz.sh", "."]
+FROM tcl_builder AS xz_builder
+COPY ["common/build/deplib/build_xz.sh", "."]
 RUN set -eux && ./build_xz.sh
 
 # =========== bzip2 ===========
-FROM xz_builder as bzip2_builder
-COPY ["./deplib/build_bzip2.sh", "."]
+FROM xz_builder AS bzip2_builder
+COPY ["common/build/deplib/build_bzip2.sh", "."]
 RUN set -eux && ./build_bzip2.sh
 
 # =========== sqlite3 ===========
-FROM bzip2_builder as sqlite3_builder
-COPY ["./deplib/build_sqlite3.sh", "."]
+FROM bzip2_builder AS sqlite3_builder
+COPY ["common/build/deplib/build_sqlite3.sh", "."]
 RUN set -eux && ./build_sqlite3.sh
 
 # =========== Python ===========
-FROM sqlite3_builder as python_builder
+FROM sqlite3_builder AS python_builder
 
-COPY ["./deplib/build_python.sh", "./deplib/install_pip.sh", "."]
+COPY ["common/build/deplib/build_python.sh", "common/build/deplib/install_pip.sh", "."]
 RUN set -eux && ./build_python.sh && ./install_pip.sh
 
 # =========== patch_stage ===========
-FROM debian:latest as patch_stage
+FROM --platform=${TARGETPLATFORM} debian:latest AS patch_stage
 ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Taipei
+ENV TZ=Asia/Taipei \
+    IS_32BIT=0
 
 RUN apt-get update -y && apt-get install -y patchelf file
 
 COPY --from=python_builder /opt/shared_libraries /opt/shared_libraries
 COPY --from=python_builder /opt/python /opt/python
 
-COPY ["./packing-initializer", "./python-wrapper", "./pip-wrapper","."]
+COPY ["common/build/wrappers/packing-initializer", "common/build/wrappers/python-wrapper", "common/build/wrappers/pip-wrapper", "."]
 RUN ./packing-initializer && rm -rf packing-initializer && \
     mv python-wrapper /opt/python/bin/python3 && \
     mv pip-wrapper /opt/python/bin/pip3 && \
@@ -113,11 +117,11 @@ RUN ./packing-initializer && rm -rf packing-initializer && \
 
 # Patch the generated python and related dynamic libraries
 COPY --from=musl_builder /opt/musl /opt/musl
-COPY ["./interpreter-patcher.sh", "."]
-RUN set -eux && ./interpreter-patcher.sh 
+COPY ["common/build/wrappers/interpreter-patcher.sh", "."]
+RUN set -eux && ./interpreter-patcher.sh
 
 # =========== final ===========
-FROM debian:latest as final
+FROM --platform=${TARGETPLATFORM} debian:latest AS final
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei
 
