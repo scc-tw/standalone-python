@@ -1,613 +1,202 @@
 # Usage Guide
 
-Learn how to use Standalone Python for running scripts, installing packages, and integrating with your projects.
+Running Python and pip from a Standalone Python install, and common integration patterns.
 
-## Table of Contents
+All examples assume the install lives at `/opt/python/`. Adjust if you extracted elsewhere.
 
-- [Running Python Scripts](#running-python-scripts)
-- [Interactive Python Shell](#interactive-python-shell)
-- [Using Pip](#using-pip)
-- [Environment Variables](#environment-variables)
-- [Integration](#integration)
-- [Best Practices](#best-practices)
-- [Advanced Usage](#advanced-usage)
+## Contents
+- [Running Python](#running-python)
+- [The REPL](#the-repl)
+- [pip](#pip)
+- [Virtual environments](#virtual-environments)
+- [Environment variables](#environment-variables)
+- [Shebang scripts](#shebang-scripts)
+- [Integration with shell/Make/Docker/CI](#integration)
+- [Common patterns](#common-patterns)
 
-## Running Python Scripts
-
-### Basic Script Execution
-
-Run Python scripts just like with regular Python:
+## Running Python
 
 ```bash
-# Direct execution
-./opt/python/bin/python script.py
+# Direct invocation
+/opt/python/bin/python3 script.py
 
-# With arguments
-./opt/python/bin/python script.py arg1 arg2
+# With args
+/opt/python/bin/python3 -c 'print(1 + 1)'
+/opt/python/bin/python3 -m http.server 8000
+/opt/python/bin/python3 -m venv .venv
 
-# From different directory
-/path/to/opt/python/bin/python /path/to/script.py
+# Via PATH
+export PATH="/opt/python/bin:$PATH"
+python3 --version
 ```
 
-### Script with Shebang
+`python3`, `pip3`, `python`, and `pip` are all the same static launcher binary (with `python`/`pip` as symlinks). It dispatches to the real `pythonX.Y-real` or `pipX.Y-real` based on `argv[0]`.
 
-Make your scripts executable with Standalone Python:
-
-```python
-#!/path/to/opt/python/bin/python
-# -*- coding: utf-8 -*-
-
-print("Hello from Standalone Python!")
-```
-
-Then make it executable:
-```bash
-chmod +x myscript.py
-./myscript.py
-```
-
-### Running Modules
-
-Execute Python modules directly:
+## The REPL
 
 ```bash
-# Run module as script
-./opt/python/bin/python -m http.server 8000
-
-# Run pip as module
-./opt/python/bin/python -m pip install requests
-
-# Run tests
-./opt/python/bin/python -m pytest
-
-# Profile code
-./opt/python/bin/python -m cProfile script.py
+$ /opt/python/bin/python3
+Python 3.12.x (main, …) on linux
+>>> import sys; sys.executable
+'/opt/python/bin/python3.12-real'
+>>> import ssl; ssl.OPENSSL_VERSION
+'OpenSSL …'
 ```
 
-## Interactive Python Shell
+`sys.executable` points at the real binary (via `/proc/self/exe` resolution), not the launcher. That's what makes subprocess-spawned Python calls work (`multiprocessing`, `concurrent.futures` with `ProcessPoolExecutor`, etc.).
 
-### Starting the REPL
-
-Launch the interactive Python interpreter:
+## pip
 
 ```bash
-# Start interactive shell
-./opt/python/bin/python
+# Install a package
+/opt/python/bin/pip3 install requests
 
-# With startup script
-./opt/python/bin/python -i startup.py
+# Install pinned versions
+/opt/python/bin/pip3 install 'requests==2.31.*'
 
-# Quiet mode (no banner)
-./opt/python/bin/python -q
+# List installed
+/opt/python/bin/pip3 list
+
+# Upgrade pip itself — note: use python3 -m pip, NOT pip3 -m pip
+/opt/python/bin/python3 -m pip install --upgrade pip
 ```
 
-### REPL Features
+Pre-built wheels (numpy, pandas, cryptography, pybind11 modules, etc.) install cleanly. C extensions that compile from source also work as long as the usual build-time prerequisites (gcc, headers, etc.) are available on the host.
 
-The Standalone Python REPL includes all standard features:
+> **About pip's "how to upgrade" notice.** Pip emits `/opt/python/bin/pip3 -m pip install --upgrade pip` as its suggested upgrade command, but `-m` is a Python flag, not a pip flag — routing it through `pip3` will error with `no such option: -m`. Use `python3 -m pip install --upgrade pip` instead.
 
-```python
->>> import sys
->>> sys.version
-'3.12.3 (main, ..., ...) [GCC 13.2.0]'
+## Virtual environments
 
->>> # Tab completion works
->>> import os
->>> os.<TAB>  # Shows available methods
-
->>> # History with arrow keys
->>> # Previous commands accessible with ↑/↓
-```
-
-### IPython Integration
-
-Install and use IPython for enhanced interactive experience:
+Standard `venv`:
 
 ```bash
-# Install IPython
-./opt/python/bin/pip install ipython
-
-# Start IPython
-./opt/python/bin/ipython
-```
-
-## Using Pip
-
-### Installing Packages
-
-Install Python packages from PyPI:
-
-```bash
-# Install a single package
-./opt/python/bin/pip install requests
-
-# Install specific version
-./opt/python/bin/pip install django==4.2.0
-
-# Install from requirements file
-./opt/python/bin/pip install -r requirements.txt
-
-# Install with extras
-./opt/python/bin/pip install 'celery[redis]'
-```
-
-### Managing Packages
-
-```bash
-# List installed packages
-./opt/python/bin/pip list
-
-# Show package details
-./opt/python/bin/pip show numpy
-
-# Upgrade packages
-./opt/python/bin/pip install --upgrade requests
-
-# Uninstall packages
-./opt/python/bin/pip uninstall requests
-```
-
-### Package Installation Location
-
-Packages are installed in the self-contained site-packages:
-
-```bash
-# View installation directory
-./opt/python/bin/python -c "import site; print(site.getsitepackages())"
-# Output: ['/path/to/opt/python/lib/python3.12/site-packages']
-
-# Packages are isolated from system Python
-ls opt/python/lib/python3.12/site-packages/
-```
-
-### Virtual Environments
-
-Create virtual environments for project isolation:
-
-```bash
-# Create virtual environment
-./opt/python/bin/python -m venv myenv
-
-# Activate virtual environment
-source myenv/bin/activate
-
-# Install packages in venv
-pip install flask
-
-# Deactivate
+/opt/python/bin/python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 deactivate
 ```
 
-### Using pip with Proxy
+The venv's `bin/python` is a symlink or small shim that ultimately delegates to the launcher. The venv's `pip` installs packages into `.venv/lib/pythonX.Y/site-packages/` as usual.
 
-Configure pip to work behind a proxy:
+Site-packages inside the main install (`/opt/python/lib/python3.12/site-packages/`) is writable if you extracted as root; venvs are the recommended way to isolate projects regardless.
 
-```bash
-# Set proxy for pip
-./opt/python/bin/pip install --proxy http://proxy.example.com:8080 requests
+## Environment variables
 
-# Or set environment variable
-export HTTP_PROXY=http://proxy.example.com:8080
-export HTTPS_PROXY=http://proxy.example.com:8080
-./opt/python/bin/pip install requests
+You generally don't need to set anything. The launcher sets `PYTHONHOME` to the install prefix if it isn't already set; everything else derives from `sys.executable`.
+
+Useful overrides:
+
+| Variable | Effect |
+|----------|--------|
+| `PYTHONHOME` | Override the prefix auto-derived from `/proc/self/exe`. Rarely needed. |
+| `PYTHONPATH` | Extra directories on `sys.path`, same semantics as upstream CPython. |
+| `PYTHONDONTWRITEBYTECODE=1` | Don't create `.pyc` files. |
+| `PYTHONUNBUFFERED=1` | Force unbuffered stdout/stderr. |
+| `SSL_CERT_FILE` / `SSL_CERT_DIR` | Point `ssl` at a custom CA bundle. The shipped OpenSSL doesn't bundle certificates — for HTTPS against public hosts, either install `certifi` via pip or point these at your system bundle (`/etc/ssl/certs/ca-certificates.crt` on most distros). |
+
+## Shebang scripts
+
+`/opt/python/bin/python3` works as a shebang target on any system that can find it:
+
+```python
+#!/opt/python/bin/python3
+print("hello")
 ```
 
-## Environment Variables
+For relocatable scripts, use `/usr/bin/env`:
 
-### Python-Specific Variables
-
-Standalone Python respects standard Python environment variables:
-
-```bash
-# Set Python path
-export PYTHONPATH=/my/modules:$PYTHONPATH
-./opt/python/bin/python script.py
-
-# Disable bytecode generation
-export PYTHONDONTWRITEBYTECODE=1
-./opt/python/bin/python script.py
-
-# Enable optimization
-export PYTHONOPTIMIZE=1
-./opt/python/bin/python script.py
-
-# Set encoding
-export PYTHONIOENCODING=utf-8
-./opt/python/bin/python script.py
+```python
+#!/usr/bin/env python3
 ```
 
-### Standalone Python Variables
-
-The wrapper scripts handle these automatically, but you can override:
-
-```bash
-# Python home (automatically set by wrapper)
-export PYTHONHOME=/path/to/opt/python
-
-# Library path (automatically set by wrapper)
-export LD_LIBRARY_PATH=/path/to/opt/python/shared_libraries/lib:$LD_LIBRARY_PATH
-```
-
-### Debugging Environment
-
-Enable debugging output:
-
-```bash
-# Python verbose mode
-./opt/python/bin/python -v script.py
-
-# Trace imports
-./opt/python/bin/python -vv script.py
-
-# Debug pip
-./opt/python/bin/pip install --verbose --debug requests
-```
+…after ensuring `/opt/python/bin` is in the invoking shell's `PATH`.
 
 ## Integration
 
-### Shell Scripts
-
-Integrate Standalone Python in shell scripts:
+### In a shell script
 
 ```bash
 #!/bin/bash
-# deploy.sh
-
-PYTHON=/opt/python/bin/python
-PIP=/opt/python/bin/pip
-
-# Check Python version
-$PYTHON --version
-
-# Install dependencies
-$PIP install -r requirements.txt
-
-# Run application
-$PYTHON app.py
+PY=/opt/python/bin/python3
+"$PY" -c 'import json,sys; json.dump({"v":sys.version},sys.stdout)'
 ```
 
-### Makefiles
-
-Use in Makefiles:
+### In a Makefile
 
 ```makefile
-PYTHON := /opt/python/bin/python
-PIP := /opt/python/bin/pip
+PY := /opt/python/bin/python3
+PIP := /opt/python/bin/pip3
 
 install:
-    $(PIP) install -r requirements.txt
+	$(PIP) install -r requirements.txt
 
 test:
-    $(PYTHON) -m pytest tests/
-
-run:
-    $(PYTHON) app.py
-
-clean:
-    find . -type d -name __pycache__ -exec rm -rf {} +
+	$(PY) -m pytest
 ```
 
-### Docker Integration
-
-Use Standalone Python in Docker containers:
+### In a Dockerfile (multi-stage)
 
 ```dockerfile
-FROM debian:bullseye-slim
-
-# Copy Standalone Python
-COPY release-3.12-x86_64.tar.gz /tmp/
-RUN tar -xzf /tmp/release-3.12-x86_64.tar.gz -C / && \
-    rm /tmp/release-3.12-x86_64.tar.gz
-
-# Set PATH
+FROM debian:bookworm-slim
+COPY --from=standalone-python:3.12-x86_64 /opt/python /opt/python
 ENV PATH="/opt/python/bin:${PATH}"
 
-# Install dependencies
-COPY requirements.txt .
-RUN python -m pip install -r requirements.txt
-
-# Copy application
-COPY . /app
-WORKDIR /app
-
-CMD ["python", "app.py"]
+RUN python3 -m pip install flask
+COPY app.py /
+CMD ["python3", "/app.py"]
 ```
 
-### CI/CD Pipelines
+Note you don't need `apt install python3` or `apt install libssl3` — the shipped tree is self-sufficient.
 
-GitHub Actions example:
+### In CI (GitHub Actions)
 
 ```yaml
-name: Test with Standalone Python
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Download Standalone Python
-        run: |
-          wget https://github.com/your-repo/standalone-python/releases/latest/download/release-3.12-x86_64.tar.gz
-          tar -xzf release-3.12-x86_64.tar.gz
-
-      - name: Install dependencies
-        run: |
-          ./opt/python/bin/pip install -r requirements.txt
-
-      - name: Run tests
-        run: |
-          ./opt/python/bin/python -m pytest
+- name: Download standalone-python
+  run: |
+    curl -L -o py.tar.gz "https://github.com/25077667/standalone-python/releases/latest/download/release-3.12-x86_64.tar.gz"
+    sudo tar -xzf py.tar.gz -C /
+- name: Run tests
+  run: /opt/python/bin/python3 -m pytest
 ```
 
-### Cron Jobs
+### In cron
 
-Schedule Python scripts with cron:
+```
+0 * * * * /opt/python/bin/python3 /opt/jobs/hourly.py
+```
+
+No `source venv/bin/activate` dance needed unless you're using venvs.
+
+## Common patterns
+
+**Pinning to this Python in a project:**
 
 ```bash
-# Edit crontab
-crontab -e
-
-# Add job (runs daily at 2 AM)
-0 2 * * * /path/to/opt/python/bin/python /path/to/script.py >> /var/log/myscript.log 2>&1
+# project/.envrc (for direnv)
+export PATH=/opt/python/bin:$PATH
 ```
 
-## Best Practices
-
-### 1. Path Management
-
-Create convenient aliases:
+**One-shot script with deps:**
 
 ```bash
-# Add to ~/.bashrc
-alias spy='/path/to/opt/python/bin/python'
-alias spip='/path/to/opt/python/bin/pip'
-
-# Use aliases
-spy script.py
-spip install requests
+/opt/python/bin/python3 -m venv /tmp/job && \
+  /tmp/job/bin/pip install requests && \
+  /tmp/job/bin/python -c 'import requests; print(requests.get("https://example.com").status_code)'
 ```
 
-### 2. Wrapper Scripts
-
-Create project-specific wrappers:
+**Checking OpenSSL version without running Python:**
 
 ```bash
-#!/bin/bash
-# run.sh
-exec /opt/python/bin/python "$@"
+strings /opt/python/shared_libraries/lib/libssl.so.3 | grep -m1 '^OpenSSL '
 ```
 
-### 3. Dependency Management
-
-Always use requirements files:
+**Identifying which real binary backs the launcher:**
 
 ```bash
-# Generate requirements
-./opt/python/bin/pip freeze > requirements.txt
-
-# Install from requirements
-./opt/python/bin/pip install -r requirements.txt
+$ ls /opt/python/bin/python*-real
+/opt/python/bin/python3.12-real
 ```
-
-### 4. Version Checking
-
-Verify compatibility in scripts:
-
-```python
-import sys
-
-# Check Python version
-if sys.version_info < (3, 10):
-    print("Error: Python 3.10+ required")
-    sys.exit(1)
-
-# Check Standalone Python
-if "standalone" not in sys.executable.lower():
-    print("Warning: Not running with Standalone Python")
-```
-
-### 5. Resource Management
-
-Monitor temporary file usage:
-
-```bash
-# Check musl interpreter in /tmp
-ls -la /tmp/StAnDaLoNeMuSlInTeRpReTeR-*.so
-
-# Clean if needed (automatically recreated)
-rm -f /tmp/StAnDaLoNeMuSlInTeRpReTeR-*.so
-```
-
-## Advanced Usage
-
-### Custom Module Path
-
-Add custom module directories:
-
-```python
-import sys
-sys.path.insert(0, '/my/custom/modules')
-
-# Now you can import from custom location
-import mymodule
-```
-
-### Embedding in Applications
-
-Use Standalone Python as an embedded interpreter:
-
-```c
-// C application
-#include <stdlib.h>
-
-int main() {
-    system("/opt/python/bin/python -c 'print(\"Embedded Python!\")'");
-    return 0;
-}
-```
-
-### Performance Profiling
-
-Profile your applications:
-
-```bash
-# Basic profiling
-./opt/python/bin/python -m cProfile -o profile.stats script.py
-
-# Analyze profile
-./opt/python/bin/python -c "
-import pstats
-stats = pstats.Stats('profile.stats')
-stats.sort_stats('cumulative')
-stats.print_stats(10)
-"
-```
-
-### Building C Extensions
-
-Compile C extensions with Standalone Python:
-
-```bash
-# Install build tools
-./opt/python/bin/pip install setuptools wheel
-
-# Build extension
-./opt/python/bin/python setup.py build_ext --inplace
-
-# Install extension
-./opt/python/bin/pip install .
-```
-
-### Network Services
-
-Run network services:
-
-```bash
-# Simple HTTP server
-./opt/python/bin/python -m http.server 8000 --bind 0.0.0.0
-
-# WSGI application
-./opt/python/bin/pip install gunicorn
-./opt/python/bin/gunicorn app:application
-```
-
-### Debugging
-
-Debug Python applications:
-
-```bash
-# Start debugger
-./opt/python/bin/python -m pdb script.py
-
-# Post-mortem debugging
-./opt/python/bin/python -m pdb -c continue script.py
-
-# Remote debugging with debugpy
-./opt/python/bin/pip install debugpy
-./opt/python/bin/python -m debugpy --listen 5678 script.py
-```
-
-## Common Patterns
-
-### Script Template
-
-Standard template for Standalone Python scripts:
-
-```python
-#!/usr/bin/env /opt/python/bin/python
-"""
-Script description here.
-"""
-
-import sys
-import os
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-def main():
-    """Main function."""
-    logger.info("Starting script...")
-
-    # Your code here
-
-    logger.info("Script completed successfully")
-    return 0
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-### Error Handling
-
-Robust error handling pattern:
-
-```python
-import sys
-import traceback
-
-try:
-    # Your code here
-    import some_module
-    result = some_module.process()
-
-except ImportError as e:
-    print(f"Error: Missing dependency - {e}", file=sys.stderr)
-    print("Install with: /opt/python/bin/pip install <package>", file=sys.stderr)
-    sys.exit(1)
-
-except Exception as e:
-    print(f"Unexpected error: {e}", file=sys.stderr)
-    traceback.print_exc()
-    sys.exit(1)
-```
-
-## Tips and Tricks
-
-### Quick Commands
-
-```bash
-# One-liner calculations
-./opt/python/bin/python -c "print(2**10)"
-
-# JSON pretty-printing
-echo '{"key": "value"}' | ./opt/python/bin/python -m json.tool
-
-# Base64 encoding
-echo "Hello" | ./opt/python/bin/python -m base64
-
-# Simple HTTP server with custom port
-./opt/python/bin/python -m http.server 9000
-
-# Calendar
-./opt/python/bin/python -c "import calendar; print(calendar.TextCalendar().formatyear(2024))"
-```
-
-### Performance Tips
-
-1. **Use virtual environments** for project isolation
-2. **Precompile bytecode** with `python -m compileall`
-3. **Cache pip downloads** with `pip download` for offline installs
-4. **Use wheels** instead of source distributions when possible
-
-## Troubleshooting Usage Issues
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for solutions to common problems.
-
-## Next Steps
-
-- Understand the architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Build from source: [BUILD.md](BUILD.md)
-- Contribute to the project: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Read the FAQ: [FAQ.md](FAQ.md)
 
 ---
 
-*For more examples and use cases, check our [GitHub repository](https://github.com/your-repo/standalone-python) or read the [FAQ](FAQ.md).*
+For installation, see [INSTALLATION.md](INSTALLATION.md). For when things break, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

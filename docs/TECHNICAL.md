@@ -1,499 +1,232 @@
 # Technical Reference
 
-Complete technical specifications and implementation details for Standalone Python.
+Facts and specifications. For architectural reasoning see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Table of Contents
+## Contents
+- [Shipped dependencies](#shipped-dependencies)
+- [Musl toolchain](#musl-toolchain)
+- [On-disk layout](#on-disk-layout)
+- [ELF properties](#elf-properties)
+- [Launcher internals](#launcher-internals)
+- [Environment variables](#environment-variables)
+- [Process startup sequence](#process-startup-sequence)
+- [System requirements](#system-requirements)
 
-- [Dependency Specifications](#dependency-specifications)
-- [Compilation Flags](#compilation-flags)
-- [File Layout Reference](#file-layout-reference)
-- [Environment Variables](#environment-variables)
-- [Binary Format Details](#binary-format-details)
-- [Performance Characteristics](#performance-characteristics)
-- [Security Specifications](#security-specifications)
-- [API Reference](#api-reference)
-- [System Requirements](#system-requirements)
+## Shipped dependencies
 
-## Dependency Specifications
+All default dep versions (override via per-Dockerfile `ENV` — see [BUILD.md](BUILD.md#customising-versions)):
 
-### Complete Dependency Matrix
+| Library | Default version | Source | Linked into |
+|---------|-----------------|--------|-------------|
+| zlib | 1.3.1 | `zlib.net/fossils/` | Python stdlib (`zlib`, `gzip`) |
+| libffi | 3.4.4 | libffi GitHub | `ctypes` |
+| expat | 2.6.0 | libexpat GitHub | `xml.etree`, `xml.parsers.expat` |
+| gdbm | 1.23 | `ftp.gnu.org/gnu/gdbm/` | `dbm.gnu` |
+| lzma | 4.32.7 | `tukaani.org/lzma/` | `lzma`, `_lzma` |
+| gettext | 0.22.2 | `ftp.gnu.org/gnu/gettext/` | `gettext` |
+| ncurses | 6.4 | ring.gr.jp mirror | `curses` |
+| openssl | 1.1.1w | openssl.org | `ssl`, `hashlib` (SSL/TLS) |
+| readline | 8.2 | ring.gr.jp mirror | `readline` (REPL) |
+| tcl | 8.6.13 | SourceForge | `tkinter` |
+| xz | 5.4.4 | `tukaani.org/xz/` | `lzma` |
+| bzip2 | 1.0.8 | sourceware.org | `bz2` |
+| sqlite3 | 3.43.1 | `sqlite.org/YYYY/` | `sqlite3` |
+| pip | 23.2.1 | pypa/get-pip | pre-installed |
+| setuptools | 65.5.1 | pypa/get-pip | pre-installed |
 
-| Component | Version | Source URL | License | Build Time | Size |
-|-----------|---------|------------|---------|------------|------|
-| **Core Runtime** |
-| musl-libc | 1.2.4 | https://musl.libc.org/ | MIT | 30-45 min | 1.2MB |
-| GCC (for musl) | 13.2.0 | https://gcc.gnu.org/ | GPL | included | N/A |
-| Linux headers | 6.1.36 | https://kernel.org/ | GPL | included | N/A |
-| **Compression** |
-| zlib | 1.3.1 | https://zlib.net/ | zlib | 5 min | 200KB |
-| bzip2 | 1.0.8 | https://sourceware.org/bzip2/ | BSD | 5 min | 150KB |
-| lzma | 5.4.4 | https://tukaani.org/xz/ | Public Domain | 5 min | 300KB |
-| xz | 5.4.4 | https://tukaani.org/xz/ | Public Domain | 5 min | 300KB |
-| **Core Libraries** |
-| libffi | 3.4.4 | https://github.com/libffi/libffi | MIT | 5 min | 150KB |
-| expat | 2.6.0 | https://libexpat.github.io/ | MIT | 5 min | 250KB |
-| gdbm | 1.23 | https://www.gnu.org/software/gdbm/ | GPL | 5 min | 400KB |
-| **Security** |
-| OpenSSL | 1.1.1w | https://www.openssl.org/ | Apache 2.0 | 15 min | 3MB |
-| **Database** |
-| SQLite | 3.43.1 | https://sqlite.org/ | Public Domain | 10 min | 1.5MB |
-| **Terminal** |
-| ncurses | 6.4 | https://www.gnu.org/software/ncurses/ | MIT | 10 min | 2MB |
-| readline | 8.2 | https://www.gnu.org/software/readline/ | GPL | 5 min | 500KB |
-| **Internationalization** |
-| gettext | 0.21.1 | https://www.gnu.org/software/gettext/ | GPL | 10 min | 2MB |
-| **Scripting** |
-| Tcl | 8.6.13 | https://www.tcl-lang.org/ | BSD | 10 min | 2MB |
-| **Python** |
-| Python | 3.12.3 | https://www.python.org/ | PSF | 20-30 min | 45MB |
-| Python | 3.11.9 | https://www.python.org/ | PSF | 20-30 min | 43MB |
-| Python | 3.10.14 | https://www.python.org/ | PSF | 20-30 min | 42MB |
+Defaults are in `common/build/deplib/build_<name>.sh`. Per-Dockerfile `ENV` values override these. A typical current active Dockerfile pins more recent versions (e.g. Python 3.12.13, OpenSSL 3.5.6, zlib 1.3.2, expat 2.7.5, sqlite 3.53.0). Check the `ENV` block of your target Dockerfile for the authoritative list.
 
-### Dependency Build Order
+## Musl toolchain
 
-```
-musl-libc (provides base C library)
-    ↓
-zlib (compression, required by Python)
-    ↓
-libffi (foreign function interface)
-    ↓
-expat (XML parsing)
-    ↓
-gdbm (database support)
-    ↓
-lzma (compression)
-    ↓
-gettext (internationalization)
-    ↓
-ncurses (terminal handling)
-    ↓
-openssl (cryptography)
-    ↓
-readline (depends on ncurses)
-    ↓
-tcl (Tcl/Tk support)
-    ↓
-xz (compression)
-    ↓
-bzip2 (compression)
-    ↓
-sqlite3 (database)
-    ↓
-Python (final build)
-```
-
-## Compilation Flags
-
-### Python Build Configuration
-
-```bash
-# Configure flags
-./configure \
-    --build="$gnuArch" \
-    --enable-loadable-sqlite-extensions \
-    --enable-optimizations \
-    --enable-option-checking=fatal \
-    --enable-shared \
-    --with-lto \
-    --with-system-expat \
-    --without-ensurepip \
-    --prefix="/opt/python" \
-    --with-openssl-rpath=auto \
-    --with-openssl=/opt/shared_libraries
-
-# Compiler flags
-CFLAGS="-O3 -fPIC -DTHREAD_STACK_SIZE=0x100000 -I/opt/shared_libraries/include"
-CPPFLAGS="-I/opt/shared_libraries/include/ncurses -I/opt/shared_libraries/include"
-LDFLAGS="-Wl,--strip-all -L/opt/shared_libraries/lib -lffi"
-
-# Optimization flags
---enable-optimizations  # Profile-guided optimization
---with-lto             # Link-time optimization
-```
-
-### Musl Build Configuration
+Pinned in `<ver>/<arch>/deplib/config.mak`:
 
 ```makefile
-# config.mak for musl-cross-make
-TARGET = x86_64-linux-musl  # or i386-linux-musl for x86
-OUTPUT = /opt/musl
-GCC_VER = 13.2.0
-MUSL_VER = 1.2.4
-LINUX_VER = 6.1.36
-COMMON_CONFIG += CC="gcc -static --static"
-COMMON_CONFIG += CXX="g++ -static --static"
-COMMON_CONFIG += FC="gfortran -static --static"
-COMMON_CONFIG += CFLAGS="-O3 -pipe"
-COMMON_CONFIG += CXXFLAGS="-O3 -pipe"
-COMMON_CONFIG += LDFLAGS="-s"
+TARGET  = x86_64-linux-musl     # or i386-linux-musl
+GCC_VER = 13.2.0                # some configs: 13.4.0
+MUSL_VER = 1.2.4                # some configs: 1.2.6
+COMMON_CONFIG += CFLAGS="-g0 -O3" CXXFLAGS="-g0 -O3" LDFLAGS="-s"
+GCC_CONFIG    += --enable-default-pie --enable-static-pie
 ```
 
-### Dependency Compilation Flags
+Built once per variant via [musl-cross-make](https://github.com/25077667/musl-cross-make) in the `musl_builder` stage. Output lands at `/opt/musl/` inside that stage.
 
-```bash
-# Common flags for all dependencies
-export CFLAGS="-O3 -fPIC"
-export LDFLAGS="-Wl,--strip-all"
-export PREFIX="/opt/shared_libraries"
+Key flags:
+- `-O3` — optimize aggressively; fine for our pre-built libs.
+- `-g0` — no debug info. Small binaries.
+- `-s` — strip. Combined with `-g0`, ~30% size reduction over defaults.
+- `--enable-default-pie --enable-static-pie` — PIE by default; static-PIE supported (used for the launcher).
 
-# OpenSSL specific
-./config \
-    --prefix=$PREFIX \
-    --openssldir=$PREFIX/ssl \
-    no-shared \
-    no-zlib \
-    enable-egd
-
-# SQLite specific
-CFLAGS="$CFLAGS -DSQLITE_ENABLE_FTS4=1 \
-    -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 \
-    -DSQLITE_ENABLE_JSON1=1 \
-    -DSQLITE_ENABLE_RTREE=1 \
-    -DSQLITE_ENABLE_FTS5=1"
-```
-
-## File Layout Reference
-
-### Complete Directory Structure
+## On-disk layout
 
 ```
-opt/python/
-├── bin/                           # Executables
-│   ├── python                    # Wrapper script (entry point)
-│   ├── python3                    # Symlink → python
-│   ├── python3.12                # Symlink → python
-│   ├── python3.12-real           # Actual Python binary (444 perms)
-│   ├── pip                       # Pip wrapper script
-│   ├── pip3                      # Symlink → pip
-│   ├── pip3.12                   # Symlink → pip
-│   ├── pip3.12-real              # Actual pip binary
-│   ├── idle3.12                  # IDLE editor
-│   ├── pydoc3.12                 # Documentation tool
-│   └── 2to3-3.12                 # Python 2 to 3 converter
-├── include/                       # C headers
-│   └── python3.12/               # Python C API headers
-│       ├── Python.h
-│       ├── pyconfig.h
-│       └── ...
-├── lib/                          # Libraries
-│   ├── python3.12/               # Python standard library
-│   │   ├── __pycache__/         # Bytecode cache
-│   │   ├── asyncio/             # Async I/O
-│   │   ├── collections/         # Collections
-│   │   ├── concurrent/          # Concurrent execution
-│   │   ├── ctypes/              # C types
-│   │   ├── distutils/           # Distribution utilities
-│   │   ├── email/               # Email handling
-│   │   ├── encodings/           # Character encodings
-│   │   ├── html/                # HTML processing
-│   │   ├── http/                # HTTP modules
-│   │   ├── importlib/           # Import machinery
-│   │   ├── json/                # JSON support
-│   │   ├── lib-dynload/         # Dynamic modules
-│   │   │   ├── _ssl.cpython-312-x86_64-linux-musl.so
-│   │   │   ├── _sqlite3.cpython-312-x86_64-linux-musl.so
-│   │   │   └── ...
-│   │   ├── multiprocessing/     # Multiprocessing
-│   │   ├── site-packages/       # Third-party packages
-│   │   ├── sqlite3/             # SQLite interface
-│   │   ├── ssl.py               # SSL module
-│   │   ├── test/                # Test suite
-│   │   ├── unittest/            # Unit testing
-│   │   ├── urllib/              # URL handling
-│   │   ├── xml/                 # XML processing
-│   │   └── ...
-│   ├── libpython3.12.so.1.0     # Python shared library
-│   └── pkgconfig/                # Package configuration
-│       └── python-3.12.pc
-├── share/                        # Shared data
-│   └── man/                     # Manual pages
-│       └── man1/
-│           ├── python3.12.1
-│           └── ...
-└── shared_libraries/             # Bundled dependencies
+/opt/python/                         <- fully relocatable
+├── bin/
+│   ├── python → python3                (symlink)
+│   ├── python3                         (static launcher, ~10 KB)
+│   ├── python3.X-real                  (real CPython, dynamic)
+│   ├── pip    → pip3                   (symlink)
+│   ├── pip3                            (same static launcher, argv[0] dispatch)
+│   └── pip3.X-real                     (pip python script)
+├── include/python3.X/                  (C headers)
+├── lib/
+│   ├── libpython3.X.so.1.0             (RPATH: $ORIGIN/../shared_libraries/lib)
+│   └── python3.X/
+│       ├── (stdlib)
+│       ├── lib-dynload/*.so            (extensions, RPATH set)
+│       └── site-packages/
+└── shared_libraries/
     └── lib/
-        ├── libc.so               # Musl C library
-        ├── libcrypto.so.1.1      # OpenSSL crypto
-        ├── libssl.so.1.1         # OpenSSL SSL
-        ├── libsqlite3.so.0       # SQLite
-        ├── libreadline.so.8      # Readline
-        ├── libncurses.so.6       # NCurses
-        ├── libz.so.1             # Zlib
-        ├── libbz2.so.1.0         # Bzip2
-        ├── liblzma.so.5          # LZMA
-        ├── libffi.so.8           # Foreign Function Interface
-        ├── libexpat.so.1         # XML parsing
-        └── ...
+        ├── libc.so                     (musl libc; also the dynamic linker)
+        ├── ld-musl-<arch>.so.1 → libc.so  (canonical name; created by rpath-patcher.sh)
+        ├── libssl.so.X, libcrypto.so.X
+        ├── libsqlite3.so.0
+        ├── libncursesw.so.6, libtinfo.so.6
+        ├── libreadline.so.8
+        ├── libffi.so.8
+        ├── libexpat.so.1
+        ├── libbz2.so.1.0, liblzma.so.5
+        ├── libtcl8.6.so, libtclstub8.6.a
+        ├── libgdbm.so.6
+        ├── libstdc++.so.6, libgcc_s.so.1   (from musl toolchain sysroot)
+        └── …
 ```
 
-### File Sizes (Approximate)
+Nothing outside `/opt/python/` is written at install time, build time, or run time.
 
-| Directory | Size | Contents |
-|-----------|------|----------|
-| bin/ | 15MB | Executables and wrappers |
-| include/ | 3MB | Header files |
-| lib/python3.12/ | 35MB | Standard library |
-| lib/python3.12/site-packages/ | Variable | User packages |
-| shared_libraries/ | 12MB | Dependencies |
-| **Total** | ~65-70MB | Complete distribution |
+## ELF properties
 
-## Environment Variables
-
-### Python-Specific Variables
-
-| Variable | Purpose | Default | Set By |
-|----------|---------|---------|--------|
-| `PYTHONHOME` | Python installation prefix | `/opt/python` | Wrapper |
-| `PYTHONPATH` | Module search paths | `lib/python3.12/site-packages` | Wrapper |
-| `PYTHONDONTWRITEBYTECODE` | Disable .pyc creation | unset | User |
-| `PYTHONOPTIMIZE` | Enable optimizations | unset | User |
-| `PYTHONHASHSEED` | Hash randomization seed | random | Python |
-| `PYTHONIOENCODING` | I/O encoding | utf-8 | Python |
-| `PYTHONUNBUFFERED` | Unbuffered output | unset | User |
-| `PYTHONVERBOSE` | Verbose imports | unset | User |
-| `PYTHONWARNINGS` | Warning control | unset | User |
-
-### Standalone Python Variables
-
-| Variable | Purpose | Value |
-|----------|---------|-------|
-| `INSTALL_PREFIX` | Installation directory | Dynamic (from wrapper) |
-| `REAL_PYTHON` | Actual Python binary | `python3.12-real` |
-| `SCRIPT_DIR` | Wrapper directory | `bin/` |
-| `magic_bootstraping_libc_path` | Musl interpreter location | `/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so` |
-
-### System Variables
-
-| Variable | Purpose | Impact |
-|----------|---------|--------|
-| `LD_LIBRARY_PATH` | Library search path | Not used (RPATH instead) |
-| `PATH` | Executable search | Add `opt/python/bin` |
-| `TMPDIR` | Temporary directory | Used for musl copy |
-| `HOME` | User home | Used for pip cache |
-
-## Binary Format Details
-
-### ELF Structure
+### Static launcher (`bin/python3`, `bin/pip3`)
 
 ```
-Python Binary (python3.12-real):
-┌─────────────────────────────┐
-│       ELF Header            │
-├─────────────────────────────┤
-│    Program Headers          │
-│  - INTERP: /tmp/StAnDa*.so │
-│  - LOAD: Code segment      │
-│  - LOAD: Data segment      │
-│  - DYNAMIC: Dynamic info   │
-├─────────────────────────────┤
-│    Section Headers          │
-│  - .text (code)            │
-│  - .data (initialized)     │
-│  - .bss (uninitialized)    │
-│  - .dynamic (linking info) │
-└─────────────────────────────┘
+$ file python3
+ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped
+$ readelf -l python3 | grep -E 'INTERP|LOAD' | head -3
+  LOAD   0x000000 0x00400000 ... RWE  0x200000
+# No INTERP program header.
 ```
 
-### Dynamic Linking Information
+Because there's no `PT_INTERP`, the kernel runs it directly — no dynamic linker involved.
+
+### Real CPython (`bin/python3.X-real`)
+
+```
+$ readelf -l python3.12-real | grep interpreter
+      [Requesting program interpreter: /lib/ld-musl-x86_64.so.1]
+
+$ readelf -d python3.12-real | grep -E 'RPATH|RUNPATH|NEEDED'
+ 0x0000000000000001 (NEEDED)     Shared library: [libpython3.12.so.1.0]
+ 0x0000000000000001 (NEEDED)     Shared library: [libc.so]
+ 0x000000000000001d (RUNPATH)    Library runpath: [$ORIGIN/../shared_libraries/lib:$ORIGIN/../lib]
+```
+
+The `PT_INTERP` still points at musl's canonical `/lib/` path, but **this path is never consulted by the kernel** — the launcher does `execve` on the shipped ld-musl directly, bypassing it.
+
+`RUNPATH` (rewritten by `rpath-patcher.sh`) is what resolves NEEDED libs at runtime. `$ORIGIN` expands to the real binary's directory (`/opt/python/bin`), so `$ORIGIN/../shared_libraries/lib` resolves to the shipped musl/openssl/etc. Depth is computed per-binary for correct `../` counts on nested files.
+
+### Extension `.so` files (`lib/python3.X/lib-dynload/*.so`, site-packages `.so`)
+
+Same RPATH rewriting treatment. When CPython `dlopen`s them, their NEEDED libs resolve back into `shared_libraries/lib/`.
+
+## Launcher internals
+
+Source: `common/build/wrappers/launcher.c`. ~95 lines of C.
+
+**Compile recipe** (inside `launcher_builder` stage):
 
 ```bash
-# Interpreter path (patched)
-INTERP: /tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so
-
-# RPATH (relative library paths)
-RPATH: $ORIGIN/../shared_libraries/lib:$ORIGIN/../lib
-
-# Required libraries
-NEEDED: libpython3.12.so.1.0
-NEEDED: libssl.so.1.1
-NEEDED: libcrypto.so.1.1
-NEEDED: libc.so (musl)
+/opt/musl/bin/${MUSL_ARCH}-linux-musl-gcc -static -Os -s \
+    -DMUSL_ARCH="\"${MUSL_ARCH}\"" \
+    launcher.c -o launcher
 ```
 
-### Symbol Resolution
+- `-static` — no dynamic linking, no `.interp`.
+- `-Os` — optimize for size.
+- `-s` — strip.
+- `-DMUSL_ARCH` — baked in as a string literal; decides `ld-musl-<arch>.so.1` at runtime.
 
-```
-Symbol lookup order:
-1. Binary itself (python3.12-real)
-2. $ORIGIN/../shared_libraries/lib/
-3. $ORIGIN/../lib/
-4. Musl libc internal libraries
-```
+**Runtime flow:**
 
-## Performance Characteristics
+1. `readlink("/proc/self/exe", …)` → absolute path to self.
+2. Strip `basename` twice → install prefix (`/opt/python`).
+3. Inspect `argv[0]` basename: prefix `python*` → python mode, `pip*` → pip mode.
+4. `opendir("$prefix/bin")` → find first entry matching `<prefix>*-real`.
+5. Compose `ld_so = "$prefix/shared_libraries/lib/ld-musl-<arch>.so.1"`; `access(ld_so, X_OK)`.
+6. Build argv:
+   - python mode: `[ld_so, "--argv0", argv[0], python_real, argv[1..]]`
+   - pip mode: `[ld_so, "--argv0", argv[0], python_real, pip_real, argv[1..]]`
+7. `setenv("PYTHONHOME", prefix, 0)` (only if unset).
+8. `execv(ld_so, new_argv)`.
 
-### Startup Performance
+On failure at any step, writes a single line to stderr and exits 127.
 
-| Operation | Time | Details |
-|-----------|------|---------|
-| Wrapper execution | ~5ms | Shell script overhead |
-| Musl bootstrap | ~3ms | Copy to /tmp (first run) |
-| Library loading | ~10ms | Shared library resolution |
-| Python initialization | ~50ms | Runtime setup |
-| **Total cold start** | ~70ms | First execution |
-| **Warm start** | ~20ms | Subsequent runs |
+`--argv0` is a musl ≥ 1.2.0 feature. It preserves the user-facing process name so `ps`, `/proc/self/cmdline` consumers, and anything reading `sys.argv[0]` see `python3` (or whatever the user typed), not the real binary path.
 
-### Memory Usage
+## Environment variables
 
-| Component | RAM Usage | Notes |
-|-----------|-----------|-------|
-| Base interpreter | 8MB | Minimal Python |
-| Standard library | 15MB | Loaded modules |
-| Shared libraries | 5MB | Mapped libraries |
-| User modules | Variable | Application-specific |
-| **Typical total** | 30-50MB | Running application |
+Automatically set by the launcher:
 
-### Disk I/O
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `PYTHONHOME` | install prefix | Only set if not already in environment. |
 
-| Operation | Size | Frequency |
-|-----------|------|-----------|
-| Musl copy to /tmp | 1.2MB | Once per boot |
-| Module loading | Variable | On import |
-| Bytecode cache | Variable | First import |
-| Pip downloads | Variable | Package installation |
+Respected by Python (standard CPython semantics):
 
-### CPU Usage
+| Variable | Effect |
+|----------|--------|
+| `PYTHONPATH` | Extra directories on `sys.path`. |
+| `PYTHONSTARTUP` | Script to run on REPL start. |
+| `PYTHONDONTWRITEBYTECODE` | Don't write `.pyc`. |
+| `PYTHONUNBUFFERED` | Unbuffer stdout/stderr. |
+| `PYTHONUTF8=1` | Force UTF-8 mode. |
+| `PYTHONIOENCODING` | Override stdio encoding. |
+| `PYTHONHASHSEED` | Hash randomisation seed. |
 
-```python
-# Optimization levels and impact
--O0: No optimization (default)
--O1: Basic optimization, remove assert
--O2: More optimization, remove docstrings
---with-lto: Link-time optimization (10-20% faster)
---enable-optimizations: PGO (20-30% faster)
-```
+SSL-related:
 
-## Security Specifications
+| Variable | Effect |
+|----------|--------|
+| `SSL_CERT_FILE` | Path to CA bundle. |
+| `SSL_CERT_DIR` | Directory of CA certificates. |
+| `REQUESTS_CA_BUNDLE` | Only `requests` library. |
 
-### File Permissions
+Not honoured (no effect):
 
-```bash
-# Executables
--r-xr-xr-x  python-wrapper      # 755
--r--r--r--  python3.12-real     # 444 (read-only)
--r-xr-xr-x  pip-wrapper         # 755
+- `LD_LIBRARY_PATH` against host libs — the real Python's RPATH always wins for the shipped libs, and nothing else needs finding.
+- `LD_PRELOAD` — possible in principle but unusual; nothing in the launcher does `LD_PRELOAD` tricks.
 
-# Libraries
--r--r--r--  *.so                # 444
--rw-r--r--  *.py                # 644
--rw-r--r--  *.pyc               # 644
+## Process startup sequence
 
-# Directories
-drwxr-xr-x  directories          # 755
-```
+Measured latencies (approximate, on modern x86_64):
 
-### Security Features
+| Phase | Time | What's happening |
+|-------|------|------------------|
+| `execve` of launcher | <1 ms | kernel loads ~10 KB static ELF |
+| launcher work | <1 ms | readlink, string ops, execve setup |
+| `execve` of ld-musl | <1 ms | kernel loads ld.so (~200 KB) |
+| ld-musl → Python | 5–15 ms | mmap real CPython, resolve NEEDED libs, call `_start` |
+| Python init | 30–80 ms | site.py, `sys.path` setup, default `import site` |
+| User code starts | — | |
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| ASLR | Enabled | Address randomization |
-| DEP/NX | Enabled | Non-executable stack |
-| RELRO | Full | Read-only relocations |
-| Stack Canaries | Enabled | Buffer overflow protection |
-| Fortify Source | Level 2 | Compile-time protection |
-| PIE | Enabled | Position independent |
+Total overhead vs. invoking the real Python binary directly: <2 ms. Undetectable in practice.
 
-### Cryptographic Support
+## System requirements
 
-```python
-# Supported algorithms (via OpenSSL 1.1.1w)
-- TLS 1.0, 1.1, 1.2, 1.3
-- AES-128, AES-256
-- RSA, ECDSA, EdDSA
-- SHA-1, SHA-256, SHA-512
-- HMAC
-- PBKDF2
-```
+**Kernel.** Linux ≥ 3.2. This is conservative; musl 1.2.4 itself requires ≥ 2.6.39, so the practical floor is older than most modern distros.
 
-## API Reference
+**Architecture.**
+- `x86_64`: AMD64 / Intel 64 with SSE2 (universal since ~2005).
+- `x86` (i386): 32-bit x86, i686 baseline.
 
-### Wrapper Script API
+**Disk.** ~200 MB installed (depending on version).
 
-```bash
-# python-wrapper functions
-find_real_python()      # Locate python*-real binary
-setup_environment()     # Configure PYTHONPATH/PYTHONHOME
-bootstraping_libc()     # Copy musl to /tmp
-invoke_real_python()    # Execute actual Python
-restore_environment()   # Clean up environment
-```
+**Memory.** ~15 MB RSS for a bare interpreter; real usage depends on workload.
 
-### Python C API Compatibility
+**Container hosts.** Works inside any Linux container with the default Docker seccomp profile. No `--privileged` or capabilities needed.
 
-```c
-// Supported API version
-#define PY_VERSION "3.12.3"
-#define PY_MAJOR_VERSION 3
-#define PY_MINOR_VERSION 12
-#define PY_MICRO_VERSION 3
+**Does NOT require:**
 
-// ABI compatibility
-#define Py_LIMITED_API 0x030C0000  // 3.12+
-```
-
-### Module Extension API
-
-```python
-# Building C extensions
-from distutils.core import setup, Extension
-
-module = Extension('mymodule',
-    sources=['mymodule.c'],
-    include_dirs=['/opt/python/include/python3.12'],
-    library_dirs=['/opt/python/lib'],
-    runtime_library_dirs=['/opt/python/lib'])
-
-setup(name='MyModule',
-      ext_modules=[module])
-```
-
-## System Requirements
-
-### Minimum Requirements
-
-| Component | Requirement | Notes |
-|-----------|-------------|-------|
-| **Kernel** | Linux 2.6.32+ | Musl minimum |
-| **Architecture** | x86_64 or x86 | 64-bit or 32-bit |
-| **Memory** | 128MB RAM | 512MB recommended |
-| **Disk** | 200MB free | For installation |
-| **/tmp** | 50MB free | For musl copy |
-| **Shell** | POSIX sh | For wrappers |
-
-### Supported Distributions
-
-| Distribution | Versions | Status |
-|--------------|----------|--------|
-| Ubuntu | 14.04+ | ✅ Fully supported |
-| Debian | 8+ | ✅ Fully supported |
-| RHEL/CentOS | 6+ | ✅ Fully supported |
-| Alpine | All | ✅ Fully supported |
-| Arch | All | ✅ Fully supported |
-| OpenSUSE | 12+ | ✅ Fully supported |
-| Fedora | 20+ | ✅ Fully supported |
-| Amazon Linux | All | ✅ Fully supported |
-| Embedded Linux | 2.6.32+ | ✅ Fully supported |
-
-### Container Support
-
-| Platform | Support | Notes |
-|----------|---------|-------|
-| Docker | ✅ Full | All Linux images |
-| Podman | ✅ Full | Rootless supported |
-| LXC/LXD | ✅ Full | No restrictions |
-| Kubernetes | ✅ Full | Any Linux nodes |
-| OpenShift | ✅ Full | No special requirements |
-
-### Not Supported
-
-- Windows (including WSL1)
-- macOS
-- FreeBSD/OpenBSD/NetBSD
-- Solaris
-- AIX
-- Non-Linux systems
-
----
-
-*This technical reference provides comprehensive details for developers and system administrators working with Standalone Python.*
+- glibc (any version)
+- Root / sudo for install or run
+- Network access after install
+- Writable `/tmp`
+- `/proc` — actually it does; `/proc/self/exe` is read by the launcher. If you're in an unusual sandbox with `/proc` hidden, the launcher falls back to failure. This is a rare edge case.

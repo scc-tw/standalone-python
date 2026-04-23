@@ -1,546 +1,190 @@
 # System Architecture
 
-A deep dive into the design and implementation of Standalone Python's portable architecture.
+How Standalone Python produces a relocatable, libc-independent Python tree.
 
-## Table of Contents
-
+## Contents
 - [Overview](#overview)
-- [Design Principles](#design-principles)
-- [System Components](#system-components)
-- [Multi-Stage Build Process](#multi-stage-build-process)
-- [Musl Libc Integration](#musl-libc-integration)
-- [ELF Patching Mechanism](#elf-patching-mechanism)
-- [Wrapper Scripts](#wrapper-scripts)
-- [Portability Mechanism](#portability-mechanism)
-- [Dependency Management](#dependency-management)
-- [Runtime Behavior](#runtime-behavior)
+- [Design principles](#design-principles)
+- [Project layout](#project-layout)
+- [Build pipeline](#build-pipeline)
+- [The musl cross-toolchain](#the-musl-cross-toolchain)
+- [The static launcher](#the-static-launcher)
+- [RPATH rewriting](#rpath-rewriting)
+- [Runtime behaviour](#runtime-behaviour)
+- [Extending the system](#extending-the-system)
 
 ## Overview
 
-Standalone Python achieves complete portability through a carefully orchestrated combination of:
+A built release ships a single directory tree — conventionally `/opt/python/` — that contains:
 
-1. **Custom C Library**: Uses musl libc instead of glibc
-2. **Static Linking**: All dependencies bundled in the distribution
-3. **ELF Manipulation**: Dynamic interpreter path modification
-4. **Wrapper Scripts**: Runtime environment configuration
-5. **Relative Paths**: Location-independent execution
+- A statically-linked C **launcher** at `bin/python3` and `bin/pip3`.
+- The **real** CPython interpreter at `bin/pythonX.Y-real` (dynamically linked against musl).
+- A shipped **musl runtime** under `shared_libraries/lib/` (`libc.so`, `ld-musl-<arch>.so.1`, C++ stdlib, etc.).
+- The CPython standard library and any extension modules under `lib/pythonX.Y/`.
 
-### Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   User Application                       │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Wrapper Scripts                       │
-│         (python-wrapper, pip-wrapper)                    │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│                   Python Interpreter                     │
-│              (python3.12-real binary)                    │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│                  Shared Libraries                        │
-│    (OpenSSL, SQLite, readline, ncurses, etc.)          │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│                      Musl Libc                          │
-│     (/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-*.so)        │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Linux Kernel                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Design Principles
-
-### 1. Zero System Dependencies
-
-**Principle**: The distribution must not depend on any system libraries.
-
-**Implementation**:
-- Bundle all required libraries
-- Use musl libc instead of system glibc
-- Include all Python standard library modules
-
-### 2. Complete Relocatability
-
-**Principle**: The installation can be moved anywhere without breaking.
-
-**Implementation**:
-- Use relative paths for all internal references
-- Dynamic environment configuration via wrappers
-- Runtime path resolution with `$ORIGIN`
-
-### 3. Transparent Operation
-
-**Principle**: Users shouldn't need to know about the internal complexity.
-
-**Implementation**:
-- Wrapper scripts handle all setup
-- Automatic musl interpreter bootstrapping
-- Standard Python command-line interface
-
-### 4. Minimal Footprint
-
-**Principle**: Keep the distribution as small as possible.
-
-**Implementation**:
-- Strip all binaries
-- Optimize compilation flags
-- Share common libraries
-- Compress distribution archives
-
-## System Components
-
-### Core Components
-
-| Component | Purpose | Location |
-|-----------|---------|----------|
-| Python Binary | Actual Python interpreter | `bin/python3.12-real` |
-| Wrapper Scripts | Environment setup | `bin/python`, `bin/pip` |
-| Standard Library | Python modules | `lib/python3.12/` |
-| Shared Libraries | Dependencies | `shared_libraries/lib/` |
-| Musl Interpreter | C library | `/tmp/StAnDaLoNe*.so` |
-| Site Packages | User packages | `lib/python3.12/site-packages/` |
-
-### Dependency Tree
+At invocation time:
 
 ```
-Python Interpreter
-├── musl-libc (C library)
-├── zlib (compression)
-├── libffi (foreign function interface)
-├── expat (XML parsing)
-├── gdbm (database)
-├── lzma (compression)
-├── gettext (internationalization)
-├── ncurses (terminal handling)
-├── openssl (cryptography)
-├── readline (command-line editing)
-├── tcl (Tcl/Tk support)
-├── xz (compression)
-├── bzip2 (compression)
-└── sqlite3 (database)
+user → /opt/python/bin/python3            # static C launcher
+     → execve(ld-musl-<arch>.so.1,        # shipped dynamic linker
+         ["--argv0", "python3",
+          "/opt/python/bin/pythonX.Y-real",  # real CPython
+          ...user args])
+     → CPython runs, loads .so extensions via RPATH=$ORIGIN/…/shared_libraries/lib
 ```
 
-## Multi-Stage Build Process
+The kernel never executes the real CPython directly, so its `PT_INTERP` is never consulted. Nothing is written to `/tmp`. The tree is fully relocatable — copy `/opt/python/` anywhere and it still works.
 
-The build uses a 13-stage Docker process to create a clean, minimal distribution:
+## Design principles
 
-### Build Stages
+1. **libc isolation.** Python is built against a cross-compiled musl, not the host glibc. The dynamic linker it needs ships with it.
+2. **No host contract.** The distribution makes no assumptions about host files, paths, or libraries.
+3. **Kernel-only requirement.** A recent-enough Linux kernel is the only runtime prerequisite.
+4. **Relocatable.** All internal references are `$ORIGIN`-relative so the install path can change.
+5. **Auditable versions.** Every shipped dependency version is declared in the per-version `Dockerfile`.
+
+## Project layout
 
 ```
-Stage 1: musl_builder
-    ↓ (Builds musl-libc toolchain)
-Stage 2: libz_builder
-    ↓ (Builds zlib compression)
-Stage 3: ffi_builder
-    ↓ (Builds libffi)
-Stage 4: expat_builder
-    ↓ (Builds XML parser)
-Stage 5: gdbm_builder
-    ↓ (Builds GNU database)
-Stage 6: lzma_builder
-    ↓ (Builds LZMA compression)
-Stage 7: gettext_builder
-    ↓ (Builds i18n support)
-Stage 8: ncurses_builder
-    ↓ (Builds terminal library)
-Stage 9: openssl_builder
-    ↓ (Builds SSL/TLS)
-Stage 10: readline_builder
-    ↓ (Builds readline)
-Stage 11: tcl_builder
-    ↓ (Builds Tcl)
-Stage 12: xz_builder
-    ↓ (Builds XZ utils)
-Stage 13: bzip2_builder
-    ↓ (Builds bzip2)
-Stage 14: sqlite3_builder
-    ↓ (Builds SQLite)
-Stage 15: python_builder
-    ↓ (Builds Python)
-Stage 16: patch_stage
-    ↓ (Patches ELF files)
-Final Stage: Creates distribution
+standalone-python/
+├── 3.10/                         # per-version, per-arch Dockerfiles
+│   ├── x86/
+│   │   ├── Dockerfile
+│   │   └── deplib/config.mak     # musl-cross-make config (TARGET, GCC_VER, MUSL_VER)
+│   └── x86_64/
+│       ├── Dockerfile
+│       └── deplib/config.mak
+├── 3.11/…
+├── 3.12/…
+├── common/
+│   ├── build/
+│   │   ├── deplib/               # shared dependency build scripts
+│   │   │   ├── build_zlib.sh
+│   │   │   ├── build_ffi.sh
+│   │   │   ├── build_openssl.sh
+│   │   │   ├── …                 # 16 build_*.sh + install_pip.sh
+│   │   │   └── build_musl.sh
+│   │   └── wrappers/
+│   │       ├── launcher.c            # static C launcher source
+│   │       ├── packing-initializer   # renames pythonX.Y → pythonX.Y-real
+│   │       └── rpath-patcher.sh      # rewrites RPATH, installs musl runtime
+│   └── patches/common/ncurses/
+│       └── fix-ncurses-underlinking.patch
+├── ci/
+│   └── packing_release_tar.sh    # extracts /opt/python from docker save output
+├── .github/workflows/build.yml
+└── .gitlab-ci.yml
 ```
 
-### Build Flow Visualization
+Each of the six per-version directories (`3.10/x86`, `3.10/x86_64`, `3.11/x86`, `3.11/x86_64`, `3.12/x86`, `3.12/x86_64`) contains only a `Dockerfile` and a `deplib/config.mak`. All build logic lives in `common/`.
 
-```mermaid
-graph TD
-    A[Alpine Base] --> B[Musl Builder]
-    B --> C[Dependency Builders]
-    C --> D[Python Builder]
-    D --> E[Patch Stage]
-    E --> F[Final Distribution]
+## Build pipeline
 
-    C --> C1[zlib]
-    C --> C2[libffi]
-    C --> C3[expat]
-    C --> C4[...]
+The Dockerfile for each variant is a linear chain of ~17 stages. The build context is **the repo root**; the Dockerfile is selected with `-f`:
+
+```
+docker build -f 3.12/x86_64/Dockerfile -t standalone-python:3.12-x86_64 .
 ```
 
-## Musl Libc Integration
+Stages (top to bottom):
 
-### Why Musl?
+| # | Stage | Base | What it does |
+|---|-------|------|--------------|
+| 1 | `base_builder` | `amd64/alpine:3.18.3` (or `i386/alpine`) | Alpine toolchain: gcc, make, etc. Declares every dep's version in `ENV`. |
+| 2 | `musl_builder` | `amd64/debian:bookworm` (or `i386/debian`) | Cross-compiles a musl toolchain (gcc + musl) via [musl-cross-make](https://github.com/25077667/musl-cross-make). |
+| 3–15 | `libz_builder`, `ffi_builder`, `expat_builder`, `gdbm_builder`, `lzma_builder`, `gettext_builder`, `ncurses_builder`, `openssl_builder`, `readline_builder`, `tcl_builder`, `xz_builder`, `bzip2_builder`, `sqlite3_builder` | each `FROM` the previous stage | Builds each dependency into `/opt/shared_libraries`. |
+| 16 | `python_builder` | `FROM sqlite3_builder` | Compiles CPython against all shipped deps; runs `install_pip.sh`. |
+| 17 | `launcher_builder` | `FROM musl_builder` | Cross-compiles `launcher.c` statically with the shipped musl toolchain. |
+| 18 | `patch_stage` | `amd64/debian:latest` | Assembles the final tree: runs `packing-initializer`, installs the launcher, copies in musl runtime, runs `rpath-patcher.sh`. |
+| 19 | `final` | `amd64/debian:latest` | Copies only `/opt/python/` out. This is what ships. |
 
-Musl libc provides several advantages over glibc:
+Stages 3–15 form one long chain so every dependency is visible to the next. This is also what makes Docker's layer cache useful — rebuilding after bumping e.g. `TCL_VERSION` re-runs only tcl-onward.
 
-1. **Static linking friendly**: Designed for static compilation
-2. **Smaller size**: ~1MB vs glibc's ~8MB
-3. **Cleaner code**: Simpler, more maintainable
-4. **Better portability**: Works across all Linux versions
+## The musl cross-toolchain
 
-### Musl Build Configuration
+`musl-cross-make` builds a GCC that targets musl. Pinned in `deplib/config.mak`:
 
 ```makefile
-# config.mak for musl-cross-make
-TARGET = x86_64-linux-musl
-OUTPUT = /opt/musl
-GCC_VER = 13.2.0
-MUSL_VER = 1.2.4
-LINUX_VER = 6.1.36
+TARGET  = x86_64-linux-musl           # or i386-linux-musl
+GCC_VER = 13.2.0                      # or 13.4.0 on newer configs
+MUSL_VER = 1.2.4                      # or 1.2.6
+COMMON_CONFIG += CFLAGS="-g0 -O3" CXXFLAGS="-g0 -O3" LDFLAGS="-s"
+GCC_CONFIG    += --enable-default-pie --enable-static-pie
 ```
 
-### Runtime Musl Bootstrap
+The toolchain is built once per variant in the `musl_builder` stage and its output (`/opt/musl/`) is then reused by both `python_builder` (via the earlier stage chain's compiler setup) and `launcher_builder` (directly, for the static launcher).
 
-The musl interpreter is copied to `/tmp` at runtime:
+## The static launcher
 
-```bash
-# Magic path for musl interpreter
-/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so
+`common/build/wrappers/launcher.c` compiles to a ~10 KB static ELF with no `PT_INTERP`. It replaces what used to be two shell wrappers (`python-wrapper`, `pip-wrapper`).
 
-# Why /tmp?
-# - Always writable
-# - Available on all systems
-# - Cleaned on reboot
-# - No root required
+**Flow:**
+
+```c
+readlink("/proc/self/exe", …)                 // /opt/python/bin/python3
+prefix    = dirname(dirname(exe))             // /opt/python
+ld_so     = $prefix/shared_libraries/lib/ld-musl-<arch>.so.1
+python_real = find("python*-real" in bin/)
+pip_real    = find("pip*-real"    in bin/)   // only for pip3 mode
+
+if (argv[0] basename starts with "pip")
+    execv(ld_so, [ld_so, "--argv0", argv[0], python_real, pip_real, argv[1..]]);
+else
+    execv(ld_so, [ld_so, "--argv0", argv[0], python_real,            argv[1..]]);
 ```
 
-## ELF Patching Mechanism
+Key properties:
 
-### The Problem
+- The launcher's own `.interp` is absent (statically linked), so it runs on any Linux kernel regardless of host libc.
+- It invokes the shipped musl dynamic linker **directly** via `execve`. The kernel reads musl's own `PT_INTERP` (which points at itself — musl's `libc.so` is both libc and ld.so), and musl then loads `pythonX.Y-real` as a regular program. Python's own `.interp` is never consulted by the kernel.
+- `--argv0` (musl ≥ 1.2.0 feature) preserves the user-facing process name so `ps`, `sys.argv[0]`, and `sys.executable`-derived paths look right.
+- `/proc/self/exe` makes the whole chain location-independent.
 
-Standard Linux binaries have hardcoded interpreter paths:
+Build-time the launcher is compiled against the shipped musl:
 
-```bash
-# Normal Python binary
-$ readelf -l /usr/bin/python | grep interpreter
-[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+```dockerfile
+FROM musl_builder AS launcher_builder
+ENV MUSL_ARCH=x86_64
+COPY common/build/wrappers/launcher.c /src/launcher.c
+RUN /opt/musl/bin/${MUSL_ARCH}-linux-musl-gcc -static -Os -s \
+      -DMUSL_ARCH="\"${MUSL_ARCH}\"" \
+      /src/launcher.c -o /src/launcher
 ```
 
-### The Solution
+## RPATH rewriting
 
-We patch all ELF files to use our musl interpreter:
+`common/build/wrappers/rpath-patcher.sh` runs in `patch_stage` and does three things:
 
-```bash
-# After patching
-$ readelf -l python3.12-real | grep interpreter
-[Requesting program interpreter: /tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so]
-```
-
-### Patching Process
-
-The `interpreter-patcher.sh` script:
-
-1. **Find all ELF binaries**:
-   ```bash
-   find /opt/python -type f -executable -exec file {} \; | grep ELF
+1. **Copy the musl runtime:** `cp -r /opt/musl/*-musl/lib/* /opt/python/shared_libraries/lib/`
+2. **Create the canonical linker symlink:** `ln -s libc.so ld-musl-<arch>.so.1` (because musl's `libc.so` *is* its dynamic linker).
+3. **Rewrite RPATH on every dynamic ELF under `/opt/python/**/bin/`**:
    ```
-
-2. **Calculate relative paths**:
-   ```bash
-   # For each binary, calculate ../.. to reach root
-   relative_path="../../shared_libraries/lib"
+   RPATH = $ORIGIN/…/shared_libraries/lib:$ORIGIN/…/lib
    ```
+   The `…` depth is computed from each file's own path so deeply-nested binaries still resolve. Static ELFs (the launcher itself) are filtered out — patchelf is only run on ones marked `dynamically linked`.
 
-3. **Patch with patchelf**:
-   ```bash
-   patchelf --set-interpreter /tmp/StAnDaLoNe*.so \
-            --set-rpath '$ORIGIN/../shared_libraries/lib' \
-            binary
-   ```
+Notably **no `.interp` patching happens**. The real Python's `.interp` retains whatever musl-cross-make set (typically `/lib/ld-musl-<arch>.so.1`), but nothing ever `execve`s the Python binary directly — the launcher always goes through the shipped ld-musl first.
 
-### RPATH Configuration
+## Runtime behaviour
 
-The `$ORIGIN` special variable enables relative library loading:
+On `/opt/python/bin/python3 script.py`:
 
-```
-$ORIGIN/../shared_libraries/lib
-        ↑
-        Expands to directory containing the binary
-```
+1. Kernel loads the launcher (static ELF, no ld.so needed).
+2. Launcher reads `/proc/self/exe`, derives paths, calls `execve` on `shared_libraries/lib/ld-musl-x86_64.so.1` with argv constructed for `pythonX.Y-real`.
+3. Kernel loads ld-musl. ld-musl reads its argv, mmap's `pythonX.Y-real`, resolves the binary's NEEDED libs (`libpython3.X.so.1.0`, `libssl.so.3`, `libcrypto.so.3`, etc.) via the binary's `RPATH` — which resolves `$ORIGIN/../…/shared_libraries/lib` → `/opt/python/shared_libraries/lib/`.
+4. CPython starts. `sys.executable` points to `/opt/python/bin/pythonX.Y-real` (via `/proc/self/exe`). `sys.path` / `sys.prefix` derive from there.
+5. On `import numpy`, CPython `dlopen`s `numpy/core/_multiarray_umath.so`. Extension's NEEDED libs are resolved via RPATH inherited from the main binary plus its own, all pointing back into `shared_libraries/lib/`.
 
-This makes the entire distribution relocatable.
+No `/tmp` writes. No host libraries touched. No shell forked for wrapping.
 
-## Wrapper Scripts
+## Extending the system
 
-### Python Wrapper
+**Bump a dep version:** edit the `ENV` block at the top of the per-version Dockerfile. Every stage that uses that dep inherits the env var and the corresponding `build_<dep>.sh` uses `${DEP_VERSION:-default}`. No script edits needed.
 
-The `python-wrapper` script sets up the environment:
+**Add a new Python minor version:** copy a sibling per-version dir (e.g. `3.12/x86_64/` → `3.13/x86_64/`), adjust the `PYTHON_VERSION` env and `deplib/config.mak` if toolchain changes; the CI matrix picks it up.
 
-```bash
-#!/bin/sh
-# Simplified view of python-wrapper
+**Add a new arch:** create `3.X/<arch>/Dockerfile` + `deplib/config.mak`. `launcher.c`'s arch handling is controlled by the `MUSL_ARCH` define (currently `x86_64` or `i386`); add a new value if introducing another arch. Prefix base images with the correct Docker arch name (`amd64`, `i386`, `arm64v8`, etc.).
 
-# 1. Find installation directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_PREFIX="$SCRIPT_DIR/../"
+**Swap a dependency:** edit the shared `common/build/deplib/build_<dep>.sh`. All six Dockerfiles pick up the change automatically.
 
-# 2. Find real Python binary
-REAL_PYTHON=$(find "$INSTALL_PREFIX/bin" -name 'python*-real')
-
-# 3. Bootstrap musl to /tmp
-cp "$INSTALL_PREFIX/shared_libraries/lib/libc.so" \
-   "/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so"
-
-# 4. Set Python environment
-export PYTHONHOME=$INSTALL_PREFIX
-export PYTHONPATH="$INSTALL_PREFIX/lib/python3.12/site-packages"
-
-# 5. Execute real Python
-exec "$REAL_PYTHON" "$@"
-```
-
-### Pip Wrapper
-
-Similar to python-wrapper, with additional shebang handling:
-
-```bash
-#!/bin/sh
-# pip-wrapper additions
-
-# Fix shebangs in installed scripts
-fix_shebangs() {
-    for script in "$INSTALL_PREFIX/bin"/*; do
-        sed -i "s|#!.*python.*|#!/usr/bin/env $INSTALL_PREFIX/bin/python|" "$script"
-    done
-}
-```
-
-## Portability Mechanism
-
-### How Portability Works
-
-1. **No absolute paths**: Everything uses relative paths
-2. **Dynamic loader**: Musl copied to /tmp at runtime
-3. **Self-contained libraries**: All dependencies included
-4. **Environment isolation**: Wrappers set up clean environment
-
-### Portability Layers
-
-```
-Layer 1: Wrapper Scripts
-  - Handle environment setup
-  - Bootstrap musl interpreter
-  - Set PYTHONPATH/PYTHONHOME
-
-Layer 2: ELF Configuration
-  - Relative RPATH with $ORIGIN
-  - Musl interpreter in /tmp
-  - No system library dependencies
-
-Layer 3: Python Configuration
-  - Compiled with --enable-shared
-  - Uses relative imports
-  - Bundled site-packages
-
-Layer 4: Dependency Bundling
-  - All .so files included
-  - Version-specific builds
-  - No external requirements
-```
-
-## Dependency Management
-
-### Compile-Time Dependencies
-
-Each dependency is built with specific configurations:
-
-```bash
-# Example: OpenSSL build
-./config \
-    --prefix=/opt/shared_libraries \
-    --openssldir=/opt/shared_libraries/ssl \
-    no-shared \
-    no-zlib \
-    enable-egd
-```
-
-### Runtime Library Loading
-
-Library search order:
-
-1. `$ORIGIN/../shared_libraries/lib` (via RPATH)
-2. `$PYTHONHOME/lib` (Python libraries)
-3. Standard Python import paths
-
-### Dependency Versions
-
-| Library | Version | Purpose |
-|---------|---------|---------|
-| musl | 1.2.4 | C library |
-| gcc | 13.2.0 | Compiler for musl |
-| zlib | 1.3.1 | Compression |
-| openssl | 1.1.1w | SSL/TLS |
-| sqlite | 3.43.1 | Database |
-| readline | 8.2 | CLI editing |
-| ncurses | 6.4 | Terminal UI |
-
-## Runtime Behavior
-
-### Startup Sequence
-
-```
-1. User runs: ./opt/python/bin/python script.py
-                    ↓
-2. python-wrapper executes:
-   - Determines installation path
-   - Finds python3.12-real
-   - Bootstraps musl to /tmp
-   - Sets environment variables
-                    ↓
-3. python3.12-real starts:
-   - Loads musl interpreter from /tmp
-   - Loads shared libraries via RPATH
-   - Initializes Python runtime
-                    ↓
-4. Python runtime:
-   - Imports standard library
-   - Sets up sys.path
-   - Executes user script
-```
-
-### Memory Layout
-
-```
-Process Memory Map:
-┌─────────────────┐ High Address
-│     Stack       │
-├─────────────────┤
-│       ↓         │
-│                 │
-│       ↑         │
-├─────────────────┤
-│      Heap       │
-├─────────────────┤
-│ Shared Libraries│ ← Loaded from shared_libraries/lib/
-├─────────────────┤
-│  Python Binary  │ ← python3.12-real
-├─────────────────┤
-│  Musl Libc      │ ← /tmp/StAnDaLoNe*.so
-└─────────────────┘ Low Address
-```
-
-### File Descriptors
-
-Special handling for standard streams:
-
-```python
-# Wrapper ensures proper FD inheritance
-stdin  (0) → inherited from parent
-stdout (1) → inherited from parent
-stderr (2) → inherited from parent
-```
-
-## Security Considerations
-
-### Temporary File Security
-
-The musl interpreter in `/tmp` has considerations:
-
-1. **Unique naming**: Prevents conflicts
-2. **Read-only permissions**: 444 (r--r--r--)
-3. **Process isolation**: Each process can have its own
-4. **Automatic cleanup**: Removed on system reboot
-
-### Isolation Benefits
-
-1. **No system pollution**: Doesn't modify system files
-2. **User-space operation**: No root required
-3. **Sandboxing potential**: Can be containerized easily
-4. **Audit trail**: All files in known locations
-
-## Performance Characteristics
-
-### Optimization Flags
-
-Python and dependencies built with:
-
-```bash
-CFLAGS="-O3 -fPIC -march=x86-64"
-LDFLAGS="-Wl,--strip-all"
---enable-optimizations
---with-lto
-```
-
-### Overhead Analysis
-
-| Operation | Overhead | Cause |
-|-----------|----------|-------|
-| Startup | ~10ms | Wrapper script execution |
-| Library loading | ~5ms | Additional search paths |
-| Memory | ~5MB | Bundled libraries |
-| Disk I/O | Minimal | One-time musl copy |
-
-## Limitations
-
-### Known Limitations
-
-1. **Platform**: Linux-only (no Windows/macOS)
-2. **Architecture**: x86_64 and x86 only
-3. **Kernel**: Requires Linux 2.6.32+
-4. **/tmp access**: Requires writable /tmp
-5. **Binary size**: Larger than system Python (~70MB)
-
-### Workarounds
-
-- **No /tmp access**: Modify wrapper to use `$HOME/.cache`
-- **Size constraints**: Use compression, remove unused modules
-- **Architecture needs**: Build for additional architectures
-
-## Future Enhancements
-
-### Planned Improvements
-
-1. **ARM support**: Add aarch64 and armv7 builds
-2. **Smaller size**: Module stripping options
-3. **Performance**: Profile-guided optimization
-4. **Security**: Signed binaries and checksums
-5. **Compatibility**: Support for older kernels
-
-### Architecture Evolution
-
-Potential future architecture improvements:
-
-```
-Future Architecture:
-┌────────────────────┐
-│  Plugin System     │ ← Modular components
-├────────────────────┤
-│  Compression Layer │ ← Runtime decompression
-├────────────────────┤
-│  Cache Manager     │ ← Intelligent caching
-├────────────────────┤
-│  Current Core      │ ← Existing system
-└────────────────────┘
-```
-
-## Technical Deep Dives
-
-For more technical details:
-
-- [TECHNICAL.md](TECHNICAL.md) - Complete specifications
-- [BUILD.md](BUILD.md) - Build process details
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues
-
----
-
-*This architecture enables Standalone Python to run on any Linux system, making it ideal for legacy systems, embedded devices, and restricted environments.*
+See [BUILD.md](BUILD.md) for concrete build recipes and [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.

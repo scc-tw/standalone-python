@@ -1,656 +1,263 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-Solutions to common problems when using, building, or deploying Standalone Python.
+Symptoms, diagnoses, and fixes. Organised by where the problem manifests.
 
-## Table of Contents
+## Contents
+- [Installation / extraction](#installation--extraction)
+- [Running Python](#running-python)
+- [Importing modules](#importing-modules)
+- [pip](#pip)
+- [Building from source](#building-from-source)
+- [Debugging techniques](#debugging-techniques)
+- [Error reference](#error-reference)
 
-- [Installation Issues](#installation-issues)
-- [Runtime Errors](#runtime-errors)
-- [Build Problems](#build-problems)
-- [Package Management Issues](#package-management-issues)
-- [Performance Issues](#performance-issues)
-- [Compatibility Problems](#compatibility-problems)
-- [Environment Issues](#environment-issues)
-- [Debugging Techniques](#debugging-techniques)
-- [Getting Help](#getting-help)
+## Installation / extraction
 
-## Installation Issues
+### `tar: error` during extraction
 
-### Problem: Archive Extraction Fails
+Usually a truncated download. Check the file size against the release page. Re-download with `curl -L -O`.
 
-**Symptoms**:
-```bash
-tar: Error is not recoverable: exiting now
-gzip: stdin: unexpected end of file
+### Extraction succeeds but `ls opt/python/` is empty
+
+You extracted into the wrong directory. The tarball contains a top-level `opt/python/`, not just the contents of `python/`. Check with `tar tf release-…tar.gz | head`.
+
+### "Permission denied" running `bin/python3`
+
+Check the file was extracted with its executable bit:
+
+```
+$ ls -l /opt/python/bin/python3
+-rwxr-xr-x … python3       # good
+-rw-r--r-- … python3       # bad — use tar, not cp from a Windows-exported zip
 ```
 
-**Solutions**:
+Fix: `chmod +x /opt/python/bin/python3 /opt/python/bin/pip3 /opt/python/bin/*-real`.
 
-1. **Verify download integrity**:
-```bash
-# Check file size
-ls -lh release-*.tar.gz
+## Running Python
 
-# Test archive
-tar -tzf release-3.12-x86_64.tar.gz > /dev/null
-echo $?  # Should be 0
+### `./python3: No such file or directory` (with the file clearly existing)
+
+This specific error on an *existing* static binary usually means something weird is wrong — the file might actually be a broken symlink. Run `file /opt/python/bin/python3`:
+
+```
+ELF 64-bit LSB executable, x86-64, ..., statically linked, stripped
 ```
 
-2. **Re-download with resume**:
-```bash
-wget -c https://github.com/your-repo/standalone-python/releases/latest/download/release-3.12-x86_64.tar.gz
+Expected — the launcher is static. If you see "dynamically linked" or "symbolic link to …" broken target, re-extract the tarball.
+
+### `standalone-python launcher: <path>: ...` error
+
+The static launcher prints diagnostics starting with `standalone-python launcher:` and exits 127. Common messages:
+
+- `readlink /proc/self/exe: ...` — `/proc` is not mounted. Rare; happens in unusual sandboxes. Mount `/proc` inside the sandbox.
+- `<ld_so_path>: No such file or directory` — the shipped musl ld.so is missing. Check `ls /opt/python/shared_libraries/lib/ld-musl-*.so.1`. If missing, the tarball is incomplete or the `rpath-patcher.sh` step didn't run. Re-download or rebuild.
+- `could not locate python*-real in bin dir` — the real Python binary is missing. Check `ls /opt/python/bin/python*-real`. Re-extract.
+
+### `Illegal instruction` or segfault on startup
+
+The binary was built for a different CPU class. x86_64 builds require SSE2 (universal since ~2005). x86 builds require i686. Check with `uname -m` and match to the release variant.
+
+### Very old kernel errors, e.g. `FATAL: kernel too old`
+
+musl 1.2.x requires Linux ≥ 2.6.39 (practical floor). If you see this message, you're on Linux 2.6.x or earlier. This project doesn't support those.
+
+## Importing modules
+
+### `ImportError: libssl.so.X: cannot open shared object file`
+
+The shipped OpenSSL wasn't found. Check RPATH on the real Python:
+
+```
+$ readelf -d /opt/python/bin/python3.12-real | grep -E 'RUNPATH|RPATH'
+ 0x000000000000001d (RUNPATH)  Library runpath: [$ORIGIN/../shared_libraries/lib:$ORIGIN/../lib]
 ```
 
-3. **Check disk space**:
-```bash
-df -h .
-# Need at least 300MB free
-```
+If this is empty or points elsewhere, `rpath-patcher.sh` didn't run during build. Rebuild the image or re-download a known-good release.
 
-### Problem: Wrong Architecture Error
+If RPATH is correct but the file still isn't found, verify `ls /opt/python/shared_libraries/lib/libssl.so*` — the file should exist. If it doesn't, the image was built incompletely.
 
-**Symptoms**:
-```bash
-./opt/python/bin/python: cannot execute binary file: Exec format error
-```
+### `ImportError: No module named '_ssl'`
 
-**Solutions**:
+The SSL extension didn't build. This is a build-time issue, not a runtime one. Rebuild with fresh logs and check the `python_builder` stage for OpenSSL headers / linker errors.
 
-1. **Verify system architecture**:
-```bash
-uname -m
-# x86_64 = use x86_64 version
-# i386/i686 = use x86 version
-```
+### `ssl.SSLError: [SSL: CERTIFICATE_VERIFY_FAILED]`
 
-2. **Check binary architecture**:
-```bash
-file opt/python/bin/python3.12-real
-# Should match your system
-```
-
-3. **Download correct version**:
-```bash
-# For 32-bit systems
-wget .../release-3.12-x86.tar.gz
-```
-
-### Problem: Permission Denied
-
-**Symptoms**:
-```bash
--bash: ./opt/python/bin/python: Permission denied
-```
-
-**Solutions**:
+The shipped OpenSSL doesn't bundle CA certificates. Set an explicit CA bundle:
 
 ```bash
-# Fix permissions
-chmod +x opt/python/bin/*
-chmod 755 opt/python/bin/python*
-chmod 755 opt/python/bin/pip*
-
-# If SELinux is enforcing
-setenforce 0  # Temporary
-# Or add proper context
-chcon -t bin_t opt/python/bin/*
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt   # most Linux distros
 ```
 
-## Runtime Errors
+Or install `certifi` via pip:
 
-### Problem: Musl Interpreter Not Found
-
-**Symptoms**:
 ```bash
-/bin/sh: /tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so: not found
+/opt/python/bin/pip3 install certifi
+python3 -c "import ssl, certifi; print(certifi.where())"
 ```
 
-**Solutions**:
+The `requests` library will use `certifi` automatically.
 
-1. **Check /tmp permissions**:
-```bash
-ls -ld /tmp
-# Should be: drwxrwxrwt
+### `ImportError: undefined symbol: <something>` loading a C extension
 
-# Fix if needed
-sudo chmod 1777 /tmp
+Usually a package built against a different OpenSSL / libffi / etc. than what we ship. Rebuild the package from source against this Python:
+
+```
+/opt/python/bin/pip3 install --no-binary :all: <package>
 ```
 
-2. **Verify musl file exists**:
-```bash
-ls -la opt/python/shared_libraries/lib/libc.so
-# Should exist
+### `import readline` silently does nothing in the REPL
 
-# Manual copy if wrapper fails
-cp opt/python/shared_libraries/lib/libc.so \
-   /tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so
-```
+Check if readline was built: `ls /opt/python/shared_libraries/lib/libreadline.so*`. If missing, rebuild with readline enabled. Otherwise verify with:
 
-3. **Use alternative location**:
-```bash
-# Modify wrapper to use home directory
-export MUSL_PATH="$HOME/.cache/standalone-python/musl.so"
-mkdir -p "$(dirname "$MUSL_PATH")"
-cp opt/python/shared_libraries/lib/libc.so "$MUSL_PATH"
-```
-
-### Problem: Library Not Found
-
-**Symptoms**:
 ```python
-ImportError: libssl.so.1.1: cannot open shared object file
+>>> import readline
+>>> readline.__doc__
 ```
 
-**Solutions**:
+## pip
 
-1. **Verify library exists**:
+### `pip3 -m pip ...` errors with "no such option: -m"
+
+`-m` is a Python flag, not a pip flag. Pip's own self-upgrade notice suggests this form but it's wrong in our context. Use:
+
+```
+/opt/python/bin/python3 -m pip install --upgrade pip
+```
+
+### Pip installs a wheel but `import` fails
+
+Check if pip picked a wheel for the wrong libc. Our Python is musl-linked; pip should pick `*-musllinux_*.whl`, not `*-manylinux*.whl`. Pip does this automatically based on `sys.platform` tags, but if it got it wrong, force a source build:
+
+```
+pip install --no-binary :all: <package>
+```
+
+### Pip's SSL connection to PyPI fails
+
+Usually missing CA certs. See [ssl.SSLError above](#sslsslerror-ssl-certificate_verify_failed).
+
+Workaround for one-off use:
+
+```
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org <package>
+```
+
+(Not recommended for regular use — install `certifi` properly.)
+
+## Building from source
+
+### Build fails at a specific dep (e.g. `build_zlib.sh` returns 8)
+
+Upstream URL rot. Run the script's `wget` command manually to see the HTTP status:
+
+```
+wget https://www.zlib.net/zlib-1.3.1.tar.gz
+# HTTP 404 — moved to fossils/
+```
+
+Fix in the script — commonly known flaky sources:
+
+- `zlib.net` — only keeps latest; older in `zlib.net/fossils/`
+- `ftpmirror.gnu.org` — geo-redirects, can land on a 403-blocking mirror
+- `tukaani.org/lzma/` — 2008-era tarball, `config.guess` doesn't know aarch64 (but we don't target aarch64)
+
+### Build gets to `musl_builder` stage then hangs or OOMs
+
+You're probably building under QEMU emulation (Apple Silicon → amd64). Options:
+
+1. Build on a native x86_64 host.
+2. Let CI build it.
+3. Add more RAM to Docker Desktop (settings → Resources). musl-cross-make wants ~4-6 GB.
+
+### Build completes but `docker run … file /opt/python/bin/python3` says "dynamically linked"
+
+The launcher wasn't compiled static. Check `launcher_builder` stage logs for the `gcc -static ...` invocation. If `-static` is missing from the command, check the Dockerfile.
+
+### `patchelf: not an ELF executable` in `rpath-patcher.sh`
+
+`rpath-patcher.sh` filters with `file | grep 'dynamically linked'`, so static binaries (the launcher) are skipped. If you see this error, the filter probably missed a non-ELF file. Rare. Check which file triggered it.
+
+## Debugging techniques
+
+### Inspect the launcher's decision
+
+Add `-x` to the launcher — wait, the launcher is C, not a shell script. So:
+
 ```bash
-find opt/python -name "libssl.so*"
+strace -f -e execve /opt/python/bin/python3 -c 'print(1)' 2>&1 | head -30
 ```
 
-2. **Check library path**:
+Expected sequence:
+
+```
+execve("/opt/python/bin/python3", ["python3", "-c", "print(1)"], …)       # the launcher itself
+execve("/opt/python/shared_libraries/lib/ld-musl-x86_64.so.1",
+       ["/opt/python/bin/python3", "--argv0", "python3",
+        "/opt/python/bin/python3.12-real", "-c", "print(1)"], …)           # launcher → ld.so
+```
+
+If the second execve is missing or goes to a wrong path, the launcher had a problem.
+
+### Inspect ELF headers
+
 ```bash
-# Set library path explicitly
-export LD_LIBRARY_PATH="$(pwd)/opt/python/shared_libraries/lib:$LD_LIBRARY_PATH"
-./opt/python/bin/python
+readelf -l /opt/python/bin/python3.12-real | grep -A1 INTERP
+readelf -d /opt/python/bin/python3.12-real | grep -E 'NEEDED|RUNPATH|RPATH'
+file /opt/python/bin/python3
+file /opt/python/bin/python3.12-real
+ldd  /opt/python/bin/python3.12-real
 ```
 
-3. **Inspect binary RPATH**:
-```bash
-readelf -d opt/python/bin/python3.12-real | grep RPATH
-# Should show $ORIGIN paths
-```
+### Inspect what Python thinks
 
-### Problem: Module Import Errors
-
-**Symptoms**:
-```python
-ModuleNotFoundError: No module named '_ssl'
-```
-
-**Solutions**:
-
-1. **Verify module files**:
-```bash
-find opt/python -name "_ssl*"
-# Should find _ssl.cpython-312-x86_64-linux-musl.so
-```
-
-2. **Check Python path**:
 ```python
 import sys
-print(sys.path)
-# Should include site-packages
+print("executable:", sys.executable)
+print("prefix:",     sys.prefix)
+print("path:",       sys.path)
+import ssl; print("ssl:", ssl.OPENSSL_VERSION)
 ```
 
-3. **Rebuild module cache**:
-```bash
-./opt/python/bin/python -m compileall opt/python/lib/
-```
+`sys.executable` should be `…/bin/python3.X-real`. `sys.prefix` should be `/opt/python` (or wherever you installed).
 
-## Build Problems
-
-### Problem: Docker Build Fails
-
-**Symptoms**:
-```
-ERROR: failed to solve: executor failed running [/bin/sh -c ./build_musl.sh]
-```
-
-**Solutions**:
-
-1. **Increase Docker resources**:
-```bash
-# Check current limits
-docker system df
-docker info | grep -i memory
-
-# Increase via Docker Desktop settings
-# Or restart daemon with:
-sudo systemctl restart docker
-```
-
-2. **Clean Docker cache**:
-```bash
-docker system prune -a --volumes
-docker builder prune
-```
-
-3. **Build with no cache**:
-```bash
-docker build --no-cache -t test ./3.12/x86_64/
-```
-
-### Problem: Network Timeouts
-
-**Symptoms**:
-```
-wget: download timed out
-ERROR: Service 'builder' failed to build
-```
-
-**Solutions**:
-
-1. **Add retry logic**:
-```bash
-# Edit build scripts
-wget --retry-connrefused --waitretry=1 \
-     --read-timeout=20 --timeout=15 -t 5 \
-     <URL>
-```
-
-2. **Use proxy if behind firewall**:
-```dockerfile
-# In Dockerfile
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ENV HTTP_PROXY=$HTTP_PROXY
-ENV HTTPS_PROXY=$HTTPS_PROXY
-```
-
-3. **Use mirror sites**:
-```bash
-# Example: Use kernel.org mirror
-wget https://mirrors.kernel.org/gnu/readline/readline-8.2.tar.gz
-```
-
-### Problem: Out of Disk Space
-
-**Symptoms**:
-```
-No space left on device
-```
-
-**Solutions**:
-
-1. **Check and clean space**:
-```bash
-df -h
-docker system df
-docker system prune -a --volumes
-```
-
-2. **Use external volume**:
-```bash
-# Mount external storage
-docker run -v /mnt/external:/build ...
-```
-
-3. **Build in stages and clean**:
-```bash
-# Build and extract immediately
-docker build --target python_builder -t temp .
-docker run --rm temp tar czf - /opt/python > python.tar.gz
-docker rmi temp
-```
-
-## Package Management Issues
-
-### Problem: Pip Install Fails
-
-**Symptoms**:
-```
-ERROR: Could not find a version that satisfies the requirement
-```
-
-**Solutions**:
-
-1. **Update pip**:
-```bash
-./opt/python/bin/python -m pip install --upgrade pip
-```
-
-2. **Check Python version compatibility**:
-```bash
-./opt/python/bin/python --version
-# Some packages require specific Python versions
-```
-
-3. **Use compatible versions**:
-```bash
-# Install specific version
-./opt/python/bin/pip install 'package==1.2.3'
-
-# Check available versions
-./opt/python/bin/pip index versions package
-```
-
-### Problem: SSL Certificate Errors
-
-**Symptoms**:
-```
-SSL: CERTIFICATE_VERIFY_FAILED
-```
-
-**Solutions**:
-
-1. **Update certificates**:
-```bash
-./opt/python/bin/pip install --upgrade certifi
-```
-
-2. **Use trusted host (temporary)**:
-```bash
-./opt/python/bin/pip install --trusted-host pypi.org \
-    --trusted-host files.pythonhosted.org package
-```
-
-3. **Set certificate bundle**:
-```bash
-export SSL_CERT_FILE=/path/to/cacert.pem
-export REQUESTS_CA_BUNDLE=/path/to/cacert.pem
-```
-
-## Performance Issues
-
-### Problem: Slow Startup
-
-**Symptoms**:
-- Python takes several seconds to start
-- Simple scripts run slowly
-
-**Solutions**:
-
-1. **Skip bytecode generation**:
-```bash
-export PYTHONDONTWRITEBYTECODE=1
-./opt/python/bin/python script.py
-```
-
-2. **Use optimization flags**:
-```bash
-./opt/python/bin/python -O script.py  # Basic optimization
-./opt/python/bin/python -OO script.py # Maximum optimization
-```
-
-3. **Pre-compile modules**:
-```bash
-./opt/python/bin/python -m compileall -j 0 opt/python/lib/
-```
-
-### Problem: High Memory Usage
-
-**Symptoms**:
-- Memory consumption higher than expected
-- Out of memory errors
-
-**Solutions**:
-
-1. **Monitor memory usage**:
-```python
-import resource
-# Set memory limit (in bytes)
-resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, -1))  # 2GB
-```
-
-2. **Garbage collection tuning**:
-```python
-import gc
-gc.collect()  # Force collection
-gc.set_threshold(700, 10, 10)  # Adjust thresholds
-```
-
-3. **Use memory profiling**:
-```bash
-./opt/python/bin/pip install memory_profiler
-./opt/python/bin/python -m memory_profiler script.py
-```
-
-## Compatibility Problems
-
-### Problem: GLIBC Version Mismatch
-
-**Symptoms**:
-```
-version `GLIBC_2.28' not found
-```
-
-**This should not happen with Standalone Python!** If it does:
-
-**Solutions**:
-
-1. **Verify you're using Standalone Python**:
-```bash
-ldd opt/python/bin/python3.12-real
-# Should NOT show system libc
-```
-
-2. **Check musl is being used**:
-```bash
-strings opt/python/bin/python3.12-real | grep musl
-# Should find musl references
-```
-
-3. **Re-extract the archive**:
-```bash
-# May be corrupted installation
-rm -rf opt/
-tar -xzf release-*.tar.gz
-```
-
-### Problem: Kernel Too Old
-
-**Symptoms**:
-```
-FATAL: kernel too old
-```
-
-**Solutions**:
-
-1. **Check kernel version**:
-```bash
-uname -r
-# Need 2.6.32 or later
-```
-
-2. **Use older Python version**:
-```bash
-# Python 3.10 may have better compatibility
-wget .../release-3.10-x86_64.tar.gz
-```
-
-3. **Build with older kernel headers**:
-```dockerfile
-# In Dockerfile, use older headers
-ENV LINUX_VER=4.19.88  # Instead of 6.1.36
-```
-
-## Environment Issues
-
-### Problem: Wrong Python Version Runs
-
-**Symptoms**:
-- System Python runs instead of Standalone Python
-- Version mismatch
-
-**Solutions**:
-
-1. **Use absolute path**:
-```bash
-/full/path/to/opt/python/bin/python script.py
-```
-
-2. **Fix PATH order**:
-```bash
-export PATH="/path/to/opt/python/bin:$PATH"
-which python  # Should show Standalone Python
-```
-
-3. **Create unique alias**:
-```bash
-alias spy='/path/to/opt/python/bin/python'
-spy script.py
-```
-
-### Problem: Environment Variables Not Set
-
-**Symptoms**:
-```python
-sys.prefix shows wrong path
-PYTHONHOME not set correctly
-```
-
-**Solutions**:
-
-1. **Check wrapper execution**:
-```bash
-# Make sure using wrapper, not -real binary
-ls -la opt/python/bin/python
-# Should be wrapper script, not symlink to -real
-```
-
-2. **Set manually if needed**:
-```bash
-export PYTHONHOME=/path/to/opt/python
-export PYTHONPATH=/path/to/opt/python/lib/python3.12/site-packages
-```
-
-3. **Debug wrapper**:
-```bash
-sh -x opt/python/bin/python --version
-# Shows each command executed
-```
-
-## Debugging Techniques
-
-### Enable Verbose Output
+### Check what files the extension imports are looking for
 
 ```bash
-# Python verbose mode
-./opt/python/bin/python -v script.py
-
-# Very verbose (trace imports)
-./opt/python/bin/python -vv script.py
-
-# Debug wrapper scripts
-sh -x ./opt/python/bin/python script.py
-
-# Trace system calls
-strace ./opt/python/bin/python script.py 2>&1 | grep open
+strace -f -e openat /opt/python/bin/python3 -c 'import ssl' 2>&1 \
+  | grep -E 'libssl|libcrypto|\.so' | head -20
 ```
 
-### Check Binary Details
+This shows which `.so` paths the dynamic linker tried, in order.
+
+### Verify the musl symlink is in place
 
 ```bash
-# Interpreter path
-readelf -l opt/python/bin/python3.12-real | grep interpreter
-
-# Dynamic libraries
-ldd opt/python/bin/python3.12-real
-
-# RPATH settings
-readelf -d opt/python/bin/python3.12-real | grep -E 'RPATH|RUNPATH'
-
-# File type
-file opt/python/bin/python3.12-real
+$ ls -la /opt/python/shared_libraries/lib/ld-musl-*.so.1
+lrwxrwxrwx … ld-musl-x86_64.so.1 -> libc.so
 ```
 
-### Python Debugging
+If this is missing, the `rpath-patcher.sh` `ln -s libc.so ld-musl-…` step didn't run. The launcher will fail with `<path>: No such file or directory`.
 
-```python
-# Check paths
-import sys
-print("Executable:", sys.executable)
-print("Prefix:", sys.prefix)
-print("Path:", sys.path)
+## Error reference
 
-# Check modules
-import sysconfig
-print(sysconfig.get_paths())
-
-# Check SSL
-import ssl
-print(ssl.OPENSSL_VERSION)
-```
-
-### System Information
-
-```bash
-# System details
-uname -a
-lsb_release -a
-
-# Library availability
-ldconfig -p | grep -E 'ssl|crypto|python'
-
-# SELinux status
-getenforce
-
-# AppArmor status
-aa-status
-```
-
-## Common Error Messages
-
-### Reference Table
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `Exec format error` | Wrong architecture | Download correct version |
-| `No such file or directory` | Missing interpreter | Check musl in /tmp |
-| `Permission denied` | No execute permission | chmod +x |
-| `version GLIBC not found` | Using system libc | Verify Standalone Python |
-| `ImportError: No module` | Missing Python module | Check lib directory |
-| `SSL: CERTIFICATE_VERIFY_FAILED` | Certificate issues | Update certificates |
-| `OSError: [Errno 28]` | No space left | Clean disk space |
-| `cannot allocate memory` | Out of memory | Increase RAM/swap |
-
-## Getting Help
-
-### Before Asking for Help
-
-1. **Check documentation**:
-   - Read relevant sections in docs/
-   - Search existing issues on GitHub
-
-2. **Gather information**:
-```bash
-# System info
-uname -a > debug-info.txt
-./opt/python/bin/python --version >> debug-info.txt
-
-# Error details
-./opt/python/bin/python script.py 2>&1 | tee -a debug-info.txt
-
-# Directory structure
-ls -la opt/python/bin/ >> debug-info.txt
-```
-
-3. **Try common fixes**:
-   - Re-extract archive
-   - Fix permissions
-   - Check disk space
-   - Restart with clean environment
-
-### Where to Get Help
-
-1. **GitHub Issues**: Report bugs and request features
-2. **Discussions**: Ask questions and share solutions
-3. **Stack Overflow**: Tag with `standalone-python`
-4. **Community Forums**: Linux distribution forums
-
-### Reporting Bugs
-
-Include in your bug report:
-
-1. **Environment**:
-   - OS and version
-   - Kernel version
-   - Architecture
-
-2. **Steps to reproduce**:
-   - Exact commands run
-   - Expected behavior
-   - Actual behavior
-
-3. **Error messages**:
-   - Complete error output
-   - Relevant log files
-
-4. **What you've tried**:
-   - Solutions attempted
-   - Results of debugging
+| Error | Root cause | Fix |
+|-------|------------|-----|
+| `standalone-python launcher: readlink /proc/self/exe` | `/proc` not mounted | Mount `/proc` in sandbox |
+| `standalone-python launcher: <path>/ld-musl-*.so.1` | Missing shipped ld-musl | Re-extract tarball; check `rpath-patcher.sh` ran |
+| `standalone-python launcher: could not locate python*-real` | Missing real binary | Re-extract tarball |
+| `./python3: No such file or directory` (file exists) | Broken file / wrong arch | Check `file` output, verify arch match |
+| `FATAL: kernel too old` | Linux < 2.6.39 | Unsupported; use newer kernel |
+| `ImportError: lib<something>.so.X: cannot open` | Wrong/missing shared lib | Check RPATH + `shared_libraries/lib/` |
+| `ssl.SSLError: CERTIFICATE_VERIFY_FAILED` | No CA bundle | Set `SSL_CERT_FILE` or install `certifi` |
+| `pip: no such option: -m` | Wrong invocation | Use `python3 -m pip`, not `pip3 -m pip` |
+| `Illegal instruction` | Binary compiled for wrong CPU class | Check arch variant matches host |
+| `patchelf: not an ELF executable` (during build) | Non-ELF file in filter | Check what file triggered it |
 
 ---
 
-*If you've found a solution not listed here, please contribute it back to help others! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to improve the documentation.*
+Still stuck? Open an issue with:
+
+- Host distro + kernel (`uname -a`)
+- Full output of `file /opt/python/bin/python3` and `file /opt/python/bin/python3.X-real`
+- First ~30 lines of `strace -f -e execve /opt/python/bin/python3 --version 2>&1`
+- The full error message

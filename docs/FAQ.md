@@ -1,457 +1,187 @@
-# Frequently Asked Questions
+# FAQ
 
-Common questions about Standalone Python with detailed answers.
+## Contents
+- [General](#general)
+- [Installation & usage](#installation--usage)
+- [Technical](#technical)
+- [Comparison with alternatives](#comparison-with-alternatives)
+- [Packages & ecosystem](#packages--ecosystem)
+- [Build & development](#build--development)
 
-## Table of Contents
-
-- [General Questions](#general-questions)
-- [Installation & Usage](#installation--usage)
-- [Technical Questions](#technical-questions)
-- [Comparison with Alternatives](#comparison-with-alternatives)
-- [Build & Development](#build--development)
-- [Troubleshooting](#troubleshooting)
-- [Performance & Security](#performance--security)
-
-## General Questions
+## General
 
 ### What is Standalone Python?
 
-Standalone Python is a portable Python distribution that runs on any Linux system without requiring glibc or other system dependencies. It bundles Python with musl libc and all necessary libraries, creating a completely self-contained Python environment.
+A fully self-contained Python distribution that runs on any Linux system, regardless of the host's libc version. It ships a cross-compiled musl-based Python tree that depends only on the Linux kernel — no glibc, no system libraries, no host packages.
 
-### Why was Standalone Python created?
+### Why not just install Python via apt/yum?
 
-Many environments have incompatible or outdated glibc versions that prevent running modern Python. Standalone Python solves this by:
-- Eliminating glibc dependency completely
-- Working on legacy systems (kernel 2.6.32+)
-- Running in restricted environments
-- Providing consistent Python across all Linux systems
+You might need this project if:
 
-### Who should use Standalone Python?
+- Your target system has an ancient glibc and modern Python won't run there.
+- You can't install system packages (no root, corporate policy, immutable image).
+- You need a known-fixed Python environment across disparate hosts.
+- You deploy to a mix of distros and don't want six package names.
 
-Standalone Python is ideal for:
-- **System administrators** managing legacy systems
-- **DevOps engineers** needing consistent Python across environments
-- **Embedded developers** working with limited systems
-- **Researchers** using HPC clusters with outdated libraries
-- **Anyone** dealing with glibc compatibility issues
+For regular desktops / servers where you control the package manager, upstream Python is fine.
 
-### Is Standalone Python production-ready?
+### Does it work on Alpine?
 
-Yes! Standalone Python is suitable for production use:
-- Thoroughly tested across multiple distributions
-- Used in enterprise environments
-- Regular security updates
-- Complete Python standard library included
-- Full pip support for package installation
-
-### What Python versions are supported?
-
-Currently supported versions:
-- Python 3.12.3 (latest features)
-- Python 3.11.9 (stable)
-- Python 3.10.14 (LTS)
-
-Each version is available for both x86_64 and x86 architectures.
-
-## Installation & Usage
-
-### How do I install Standalone Python?
-
-Simple three-step process:
-```bash
-# 1. Download
-wget https://github.com/your-repo/standalone-python/releases/latest/download/release-3.12-x86_64.tar.gz
-
-# 2. Extract
-tar -xzf release-3.12-x86_64.tar.gz
-
-# 3. Run
-./opt/python/bin/python --version
-```
-
-### Can I install it system-wide?
-
-Yes, with root access:
-```bash
-sudo tar -xzf release-3.12-x86_64.tar.gz -C /usr/local/
-sudo ln -s /usr/local/opt/python/bin/python /usr/local/bin/standalone-python
-```
-
-### How do I use pip with Standalone Python?
-
-Pip works just like regular Python:
-```bash
-# Install packages
-./opt/python/bin/pip install requests numpy pandas
-
-# Upgrade pip itself
-./opt/python/bin/pip install --upgrade pip
-
-# Install from requirements
-./opt/python/bin/pip install -r requirements.txt
-```
-
-### Can I create virtual environments?
-
-Yes, venv works normally:
-```bash
-./opt/python/bin/python -m venv myenv
-source myenv/bin/activate
-pip install flask
-```
-
-### How do I make it my default Python?
-
-Add to your shell configuration:
-```bash
-# In ~/.bashrc or ~/.zshrc
-export PATH="/path/to/opt/python/bin:$PATH"
-alias python='/path/to/opt/python/bin/python'
-alias pip='/path/to/opt/python/bin/pip'
-```
-
-## Technical Questions
-
-### How does Standalone Python achieve portability?
-
-Standalone Python uses several techniques:
-1. **Musl libc** instead of glibc for C library
-2. **Static linking** of all dependencies
-3. **ELF patching** to use custom interpreter
-4. **Relative paths** with $ORIGIN for libraries
-5. **Wrapper scripts** for environment setup
-
-### What is the musl interpreter in /tmp?
-
-The file `/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-x86_64.so` is the musl C library that serves as the dynamic linker. It's copied there because:
-- `/tmp` is always writable
-- Allows execution without root
-- Cleaned automatically on reboot
-- Unique name prevents conflicts
-
-### Why are there wrapper scripts?
-
-The wrapper scripts (`python-wrapper`, `pip-wrapper`) handle:
-- Setting up PYTHONPATH and PYTHONHOME
-- Copying musl interpreter to /tmp
-- Finding the real Python binary
-- Managing environment variables
-- Ensuring proper library paths
-
-### What's the difference between python and python-real?
-
-- `python` → Wrapper script (entry point)
-- `python3.12-real` → Actual Python binary
-
-The wrapper prepares the environment before executing the real binary.
-
-### Can I move the installation after extraction?
-
-Yes! Standalone Python is completely relocatable:
-```bash
-# Move anywhere
-mv opt /any/location/
-/any/location/python/bin/python --version  # Works!
-```
-
-## Comparison with Alternatives
-
-### How does this compare to python-build-standalone?
-
-| Feature | Standalone Python | python-build-standalone |
-|---------|------------------|------------------------|
-| GLIBC dependency | ❌ None | ✅ Required |
-| Legacy system support | ✅ Kernel 2.6.32+ | ❌ Modern glibc only |
-| Size | ~70MB | ~40MB |
-| Portability | ✅ Any Linux | ⚠️ Matching glibc |
-| Runtime pip | ✅ Full support | ✅ Full support |
-
-### How does this compare to PyInstaller?
-
-| Feature | Standalone Python | PyInstaller |
-|---------|------------------|-------------|
-| Purpose | Portable interpreter | Application bundling |
-| Run scripts | ✅ Any Python script | ❌ Only bundled app |
-| Install packages | ✅ pip works | ❌ Pre-bundled only |
-| Development | ✅ Full REPL | ❌ No REPL |
-| Size | ~70MB base | Variable per app |
-
-### How does this compare to Docker?
-
-| Feature | Standalone Python | Docker Python |
-|---------|------------------|---------------|
-| Requirements | None | Docker daemon |
-| Overhead | Minimal | Container overhead |
-| Integration | Direct | Container boundary |
-| Root needed | ❌ No | ⚠️ For daemon |
-| Isolation | Process-level | Container-level |
-
-### How does this compare to Conda?
-
-| Feature | Standalone Python | Conda |
-|---------|------------------|-------|
-| Dependencies | All bundled | Downloads required |
-| Internet needed | ❌ No | ✅ Yes |
-| Package manager | pip | conda + pip |
-| Size | ~70MB | ~500MB+ |
-| Environments | venv | conda env |
-
-### When should I use Standalone Python vs alternatives?
-
-**Use Standalone Python when**:
-- System has incompatible/old glibc
-- No root access available
-- Need portable Python across systems
-- Working with legacy/embedded systems
-- Want minimal dependencies
-
-**Use alternatives when**:
-- System has modern glibc (python-build-standalone)
-- Building standalone applications (PyInstaller)
-- Need full isolation (Docker)
-- Want scientific packages (Conda)
-
-## Build & Development
-
-### How long does building take?
-
-Build times on typical hardware:
-- Single version/arch: 2-3 hours
-- All versions/archs: 12-18 hours
-- With caching: 30-60 minutes
-
-Factors affecting build time:
-- CPU cores (parallel builds)
-- Network speed (downloading sources)
-- Docker cache (subsequent builds)
-
-### Can I customize the Python build?
-
-Yes, modify `deplib/build_python.sh`:
-```bash
-# Add configure options
-./configure \
-    --enable-your-option \
-    --with-your-feature \
-    ...
-```
-
-### How do I add a new Python version?
-
-1. Copy existing version directory
-2. Update PYTHON_VERSION in Dockerfile
-3. Test the build
-4. Update CI/CD configuration
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-### Can I reduce the size?
-
-Yes, several approaches:
-```bash
-# Remove test suite
-rm -rf /opt/python/lib/python3.12/test
-
-# Remove unused modules
-rm -rf /opt/python/lib/python3.12/tkinter
-
-# Strip debugging symbols
-strip --strip-all /opt/python/bin/*
-
-# Use compression
-upx /opt/python/bin/python3.12-real
-```
-
-### How do I build for ARM/other architectures?
-
-Currently not supported, but possible:
-1. Modify musl build for target arch
-2. Update Docker base image
-3. Adjust compilation flags
-4. Cross-compile or use QEMU
-
-## Troubleshooting
-
-### Why does Python fail to start?
-
-Common causes and solutions:
-
-1. **Wrong architecture**:
-```bash
-uname -m  # Check your system
-file opt/python/bin/python3.12-real  # Check binary
-```
-
-2. **Missing /tmp access**:
-```bash
-ls -ld /tmp  # Should be drwxrwxrwt
-df -h /tmp   # Check space
-```
-
-3. **Corrupted extraction**:
-```bash
-tar -tzf release-*.tar.gz > /dev/null  # Test archive
-```
-
-### Why can't pip install packages?
-
-1. **Network issues**:
-```bash
-# Test connectivity
-curl https://pypi.org
-
-# Use proxy if needed
-export HTTPS_PROXY=http://proxy:8080
-```
-
-2. **SSL certificates**:
-```bash
-# Update certificates
-./opt/python/bin/pip install --upgrade certifi
-```
-
-3. **Permissions**:
-```bash
-# Check write permissions
-ls -ld opt/python/lib/python3.12/site-packages/
-```
-
-### Why is it slower than system Python?
-
-Possible reasons:
-- First run copies musl to /tmp (one-time)
-- Wrapper script overhead (~10ms)
-- No system optimization flags
-- Debug build (if custom compiled)
-
-Solutions:
-- Use -O flag for optimization
-- Pre-compile with python -m compileall
-- Ensure using release build
-
-### Why do I get "command not found"?
-
-The Python binary isn't in PATH:
-```bash
-# Use full path
-/path/to/opt/python/bin/python
-
-# Or add to PATH
-export PATH="/path/to/opt/python/bin:$PATH"
-
-# Or create alias
-alias spy='/path/to/opt/python/bin/python'
-```
-
-## Performance & Security
-
-### Is Standalone Python slower than regular Python?
-
-Performance comparison:
-- **Startup**: ~50ms slower (wrapper overhead)
-- **Runtime**: Identical performance
-- **Memory**: ~5MB additional (bundled libraries)
-
-The performance difference is negligible for most applications.
-
-### Is Standalone Python secure?
-
-Security features:
-- Regular security updates
-- All standard Python security features
-- No system library vulnerabilities
-- Read-only binary permissions
-- Can run without root
-
-Best practices:
-- Keep updated to latest release
-- Verify downloads with checksums
-- Use virtual environments
-- Follow standard Python security guidelines
-
-### Can I use it in production?
-
-Yes, with considerations:
-- ✅ Fully functional Python
-- ✅ Compatible with all pure Python packages
-- ✅ C extensions work if compiled correctly
-- ⚠️ Larger size than system Python
-- ⚠️ Manual updates required
+Yes. Alpine itself uses musl, but our shipped musl is statically bundled, so there's no version conflict with whatever Alpine has installed.
 
 ### Does it work in containers?
 
-Excellent for containers:
-```dockerfile
-FROM scratch  # or alpine:latest
-COPY release-3.12-x86_64.tar.gz /tmp/
-RUN tar -xzf /tmp/release-3.12-x86_64.tar.gz -C /
-ENV PATH="/opt/python/bin:$PATH"
-CMD ["python"]
+Yes. The tree is fully relocatable — `COPY --from=…` it into any base image. See [USAGE.md § Docker integration](USAGE.md#in-a-dockerfile-multi-stage).
+
+## Installation & usage
+
+### Where should I install it?
+
+`/opt/python/` is conventional but you can install anywhere with write permission. The tree is position-independent; there are no absolute paths baked into any binary.
+
+### Do I need root to install?
+
+No. `tar -xzf release-…tar.gz -C ~/mytools/` works.
+
+### Do I need to set LD_LIBRARY_PATH or anything?
+
+No. Everything resolves via `$ORIGIN`-relative RPATH baked in at build time.
+
+### Can I have multiple versions installed simultaneously?
+
+Yes — extract each release into its own directory. See [INSTALLATION.md § Multiple versions](INSTALLATION.md#multiple-versions-side-by-side).
+
+### How do I uninstall?
+
+`rm -rf /opt/python` (or wherever you extracted). Nothing is written outside the install directory.
+
+## Technical
+
+### What is the launcher and why does it exist?
+
+`bin/python3` is a statically-linked C binary, not the real CPython. It:
+
+1. Reads `/proc/self/exe` to find its own absolute path.
+2. Derives `$prefix/shared_libraries/lib/ld-musl-<arch>.so.1`.
+3. `execve`s that ld-musl with `python3.X-real` as its argument.
+
+This lets the distribution be relocatable — the launcher computes all paths at runtime, so moving `/opt/python/` anywhere still works. The real CPython's ELF `PT_INTERP` is never used by the kernel because the launcher doesn't `execve` it directly.
+
+See [ARCHITECTURE.md § The static launcher](ARCHITECTURE.md#the-static-launcher) for the full picture.
+
+### How is this different from the old "/tmp magic file" approach?
+
+Older builds of this project used a shell wrapper that would copy `libc.so` to `/tmp/StAnDaLoNeMuSlInTeRpReTeR-musl-<arch>.so` on first run, and patched Python's `PT_INTERP` to point at that `/tmp` path. That approach required `/tmp` to be writable, wrote a file on every first-run, and had concurrency issues.
+
+The current launcher does everything with `execve` — no `/tmp` writes, no shell fork, works in read-only filesystems.
+
+### Does it use LD_PRELOAD?
+
+No. The musl runtime is invoked via `execve` on the shipped `ld-musl-<arch>.so.1` directly. There is no `LD_PRELOAD` injection.
+
+### What's `pythonX.Y-real`?
+
+The actual CPython binary. It's renamed during build so the launcher can take over the `python3` name. At runtime the launcher `execve`s it indirectly via musl's ld.so.
+
+### What's in `shared_libraries/`?
+
+All the C libraries the Python build links against (OpenSSL, libffi, ncurses, sqlite, etc.) plus the musl C library / dynamic linker. The real Python's RPATH points in here via `$ORIGIN`.
+
+### Does `sys.executable` work correctly?
+
+Yes. Python derives `sys.executable` from `/proc/self/exe` of the process running it, which is the real `pythonX.Y-real`. That's the right answer for most uses (spawning subprocess Pythons, venv creation, etc.).
+
+## Comparison with alternatives
+
+### vs. [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+
+Both ship portable Python tarballs. Key differences:
+
+| | python-build-standalone | this project |
+|--|--|--|
+| libc | glibc (default) or musl (optional) | musl only |
+| Target compatibility | Depends on glibc version | Any Linux 3.2+ |
+| Legacy systems | Fails on old glibc | Works |
+| Binary size | Larger (more variants + debug) | Smaller |
+| Primary audience | `uv` / `rye` users | legacy / constrained environments |
+
+If you need the broadest compatibility with old systems, use this project. If you need macOS/Windows builds, debug builds, or the vast matrix of Python versions, use python-build-standalone.
+
+### vs. PyInstaller / Nuitka
+
+Those bundle your *application* into a single binary. This project ships a *Python interpreter* you can run arbitrary scripts with. Different goals — use PyInstaller/Nuitka for distributing an app, use this for distributing Python itself.
+
+### vs. Docker with a `python:3.12` image
+
+Docker wraps the whole stack. This project ships a tarball you can drop onto any Linux host (containerised or not). Use Docker if the rest of your infra is already containerised; use this when you can't assume Docker is available on the target.
+
+### vs. pyenv
+
+pyenv *builds* CPython on the host using the host's compilers and libraries. It produces something that depends on the host libc and the libraries that were present at build time. This project produces a binary that depends on neither.
+
+## Packages & ecosystem
+
+### Does pip work?
+
+Yes. Pip is pre-installed. Run `/opt/python/bin/pip3 install …` as usual.
+
+### Do binary wheels work?
+
+Yes, as long as they're compatible with musl. Most popular packages (numpy, pandas, cryptography, pillow, scipy, pyarrow, etc.) publish musl wheels (`*-musllinux_*.whl`). Pip picks the right one automatically.
+
+If a package only ships glibc-manylinux wheels, pip will fall back to source build (which works — see next question).
+
+### Can I install packages that build from source?
+
+Yes. The shipped Python has all the usual build-time bits (Python headers, `setuptools`, a working `distutils`/`sysconfig`). C extensions will compile as long as the host has `gcc` and any package-specific deps (e.g. `libxml2-dev` for lxml-from-source).
+
+### Does pybind11 work? numpy? cryptography?
+
+Yes to all. They use the standard CPython C extension ABI; our Python is a standard CPython.
+
+### Are `.so` extensions resolved correctly?
+
+Yes. Extensions under `site-packages` resolve their NEEDED libraries via RPATH set during build (`$ORIGIN/…/shared_libraries/lib`), so they find the shipped OpenSSL / libffi / etc. out of the box.
+
+For extensions with *other* C-library dependencies not shipped by us (e.g. a package that needs `libpq.so.5` for Postgres), the host needs to provide those, or the package's wheel needs to bundle them.
+
+### How do I upgrade pip?
+
+```
+/opt/python/bin/python3 -m pip install --upgrade pip
 ```
 
-Benefits:
-- No base image Python needed
-- Consistent across all Linux containers
-- Smaller than most Python base images
-- Works with minimal base images
+**Not** `/opt/python/bin/pip3 -m pip install --upgrade pip` — pip's own upgrade-hint message suggests that form, but `-m` is a Python flag, and running it through `pip3` errors with `no such option: -m`. Use `python3 -m pip` instead.
 
-### Can I use GPU libraries?
+## Build & development
 
-Yes, but with setup:
-1. GPU libraries need to be accessible
-2. CUDA/ROCm must be installed on host
-3. May need to set library paths
-4. Test thoroughly
+### How do I build it myself?
 
-Example:
-```bash
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-./opt/python/bin/python gpu_script.py
+See [BUILD.md](BUILD.md). One line:
+
+```
+docker build -f 3.12/x86_64/Dockerfile -t standalone-python:3.12-x86_64 .
 ```
 
-## More Questions?
+### How long does a build take?
 
-### Where can I get help?
+- Native x86_64 host: 30–60 min per variant (dominated by gcc cross-build).
+- Under QEMU (Apple Silicon, other non-x86 hosts): several hours, often OOM-risky.
 
-1. **Documentation**: Check docs/ directory
-2. **GitHub Issues**: Report bugs
-3. **Discussions**: Ask questions
-4. **Stack Overflow**: Tag `standalone-python`
+Use a real x86_64 machine or rely on CI for non-trivial builds.
 
-### How can I contribute?
+### Can I change the shipped dependency versions?
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup
-- Contribution guidelines
-- Code style
-- Testing requirements
+Yes — edit the `ENV` block in the per-version `Dockerfile`. Every `build_*.sh` script reads versions via `${VAR:-default}`, so one edit suffices. See [BUILD.md § Customising versions](BUILD.md#customising-versions).
 
-### Is commercial use allowed?
+### How are versions pinned across architectures?
 
-Yes! Standalone Python is MIT licensed:
-- ✅ Commercial use
-- ✅ Modification
-- ✅ Distribution
-- ✅ Private use
+Each per-version Dockerfile has its own ENV block. In practice all active Dockerfiles are kept in sync (same OpenSSL, same NCURSES, etc. across `3.{10,11,12}/{x86,x86_64}`), but you *can* diverge them if a specific Python version needs a different dep version.
 
-Dependencies follow their respective licenses (mostly MIT/BSD/Apache).
+### I hit an upstream 404 when fetching a tarball.
 
-### How often are releases made?
+Common — `zlib.net`, `ftpmirror.gnu.org`, and some SourceForge mirrors age out old versions. Edit `common/build/deplib/build_<dep>.sh` to point at a stable mirror (e.g. `zlib.net/fossils/`, `ftp.gnu.org`). See [BUILD.md § Common gotchas](BUILD.md#common-gotchas).
 
-Release schedule:
-- Security updates: As needed
-- Python updates: Following official releases
-- Feature releases: Quarterly
-- Dependency updates: Monthly review
+### Who maintains this project?
 
-### Can I request features?
-
-Yes! Open a GitHub issue with:
-- Use case description
-- Expected behavior
-- Why it's valuable
-- Possible implementation
-
----
-
-*Didn't find your question? Open an issue or start a discussion on GitHub!*
+See the GitHub repository contributors list. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
