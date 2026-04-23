@@ -22,11 +22,24 @@ export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/" # som
 export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES}"
 export CPPFLAGS="${CPPFLAGS} ${LOCAL_INCLUDES}"
 export LDFLAGS="${LDFLAGS} -L/opt/shared_libraries/lib -lffi"
+
+# Free-threaded build (PEP 703 / "no-GIL"), added in Python 3.13. Enabled
+# per-Dockerfile with `ENV DISABLE_GIL=1` in the python_builder stage. The
+# resulting install has python3.Nt binaries, libpython3.Nt.so.1.0, and
+# lib/python3.Nt/ site-packages (ABI tag "t" distinguishes them from the
+# GIL build). Passing --disable-gil to CPython < 3.13 will fail
+# --enable-option-checking=fatal, which is the behaviour we want.
+CONFIGURE_EXTRA=""
+if [ "${DISABLE_GIL:-0}" = "1" ]; then
+    CONFIGURE_EXTRA="--disable-gil"
+fi
+
 ./configure --build="$gnuArch" --enable-loadable-sqlite-extensions \
     --enable-optimizations --enable-option-checking=fatal --enable-shared \
     --with-lto --with-system-expat --without-ensurepip \
     --prefix="$INSTALL_PREFIX" --with-openssl-rpath=auto \
-    --with-openssl=/opt/shared_libraries
+    --with-openssl=/opt/shared_libraries \
+    $CONFIGURE_EXTRA
 
 make -j $(nproc)
 rm python
