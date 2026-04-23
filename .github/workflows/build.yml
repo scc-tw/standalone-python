@@ -31,6 +31,13 @@ jobs: {
                     docker run --rm release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} /opt/python/bin/pip3 --version",
             },
             {
+                "name": "psutil compatibility smoke test",
+                "run": "docker run --rm \
+                    -v \"${{ github.workspace }}/ci/smoke_psutil.py:/tmp/smoke_psutil.py:ro\" \
+                    release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} \
+                    sh -c '/opt/python/bin/pip3 install --quiet --no-cache-dir psutil && /opt/python/bin/python3 /tmp/smoke_psutil.py'",
+            },
+            {
                 "name": "Save docker image as tar file",
                 "run": "docker save release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} > release-${{ matrix.version }}-${{ matrix.architecture }}.tar",
             },
