@@ -31,21 +31,24 @@ move_musl_lib() {
 }
 
 patch_elf_rpath() {
-    all_elf_files=$(find /opt/python -type f -path "*bin/*" -executable -exec file {} \; \
-        | grep 'ELF' | grep 'dynamically linked' | cut -d: -f1)
-    for elf_file in $all_elf_files; do
-        elf_file=$(realpath "$elf_file")
-        relative_updir_count=$(echo "$elf_file" | grep -o "/" | wc -l)
-        relative_updir_count=$(expr "$relative_updir_count" - 3)
-        relative_path=""
-        for i in $(seq 1 "$relative_updir_count"); do
-            relative_path="$relative_path../"
-        done
-        rpath="\$ORIGIN/${relative_path}shared_libraries/lib:\$ORIGIN/${relative_path}lib"
+    # Compute $ORIGIN-relative paths to the two lib trees directly, rather
+    # than counting slashes and assuming the binary sits at depth 3 under
+    # /opt/python. This stays correct if the layout ever changes.
+    shared_lib_dir=/opt/python/shared_libraries/lib
+    python_lib_dir=/opt/python/lib
 
-        patchelf --set-rpath "$rpath" "$elf_file"
-        echo "Patched RPATH on $elf_file -> $rpath"
-    done
+    find /opt/python -type f -path "*bin/*" -executable -exec file {} \; \
+        | grep 'ELF' | grep 'dynamically linked' | cut -d: -f1 \
+        | while read -r elf_file; do
+            elf_file=$(realpath "$elf_file")
+            elf_dir=$(dirname "$elf_file")
+            rel_shared=$(realpath --relative-to="$elf_dir" "$shared_lib_dir")
+            rel_python=$(realpath --relative-to="$elf_dir" "$python_lib_dir")
+            rpath="\$ORIGIN/${rel_shared}:\$ORIGIN/${rel_python}"
+
+            patchelf --set-rpath "$rpath" "$elf_file"
+            echo "Patched RPATH on $elf_file -> $rpath"
+        done
 }
 
 main() {

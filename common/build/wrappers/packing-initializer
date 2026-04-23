@@ -33,9 +33,37 @@ shared_libraries_mover() {
     mv /opt/shared_libraries /opt/python/shared_libraries
 }
 
+shebang_rewriter() {
+    # `make install` drops helper scripts into /opt/python/bin (idle3.12,
+    # 2to3-3.12, python3.12-config, pydoc3.12, pip3.12, ...) with shebangs
+    # pointing at the original python binary (e.g. /opt/python/bin/python3.12).
+    # python_renamer just moved that binary to *-real, so those shebangs now
+    # dangle. Retarget every shebang in /opt/python/bin that points at the
+    # old python/pip paths to /opt/python/bin/python3 — the launcher, which
+    # a later build step installs at that path. The launcher dispatches on
+    # argv[0] basename, so running these scripts through it behaves as
+    # python-mode invocation (argv[1] = script).
+    for f in /opt/python/bin/*; do
+        [ -f "$f" ] || continue
+        # Only text scripts have `#!` as the first two bytes; skip ELFs.
+        head_bytes=$(head -c 2 "$f" 2>/dev/null || true)
+        [ "$head_bytes" = "#!" ] || continue
+        first_line=$(head -n 1 "$f")
+        case "$first_line" in
+            '#!/opt/python/bin/python'*|'#!/opt/python/bin/pip'*)
+                # Replace just the interpreter path (everything up to the
+                # first whitespace). Trailing flags like ` -E` are preserved.
+                sed -i '1 s|^#![^[:space:]]*|#!/opt/python/bin/python3|' "$f"
+                echo "Rewrote shebang: $f"
+                ;;
+        esac
+    done
+}
+
 main() {
     python_renamer
     pip_renamer
+    shebang_rewriter
     shared_libraries_mover
 }
 

@@ -117,9 +117,17 @@ FROM musl_builder AS launcher_builder
 ENV MUSL_ARCH=i386
 WORKDIR /src
 COPY ["common/build/wrappers/launcher.c", "./launcher.c"]
+# config.mak carries `MUSL_VER = X.Y.Z`; drop the patch component and bake
+# `X.Y` into the launcher as MUSL_VERSION so the site hook can hand pip the
+# matching `musllinux_X_Y_*` wheel tag without subprocess'ing ld.so every
+# Python startup.
 RUN set -eux && \
+    MUSL_VER=$(awk -F'=' '/^MUSL_VER[[:space:]]*=/ { gsub(/[[:space:]]/, "", $2); print $2 }' /src/config.mak) && \
+    MUSL_TAG=$(echo "$MUSL_VER" | cut -d. -f1,2) && \
+    test -n "$MUSL_TAG" && \
     /opt/musl/bin/${MUSL_ARCH}-linux-musl-gcc -static -Os -s \
         -DMUSL_ARCH="\"${MUSL_ARCH}\"" \
+        -DMUSL_VERSION="\"${MUSL_TAG}\"" \
         launcher.c -o launcher && \
     file launcher
 
@@ -151,6 +159,14 @@ RUN install -m 0755 /tmp/launcher /opt/python/bin/python3 && \
 COPY --from=musl_builder /opt/musl /opt/musl
 COPY ["common/build/wrappers/rpath-patcher.sh", "."]
 RUN set -eux && ./rpath-patcher.sh
+
+# Site-level hook that tells pip/packaging the shipped libc is musl so wheel
+# resolution picks `musllinux_*` wheels instead of glibc-built manylinux
+# wheels. Runs on every Python startup via the .pth but is a no-op unless
+# the launcher has set _STANDALONE_PYTHON_MUSL_VERSION in the env.
+COPY ["common/build/wrappers/standalone_python_musl.py", \
+      "common/build/wrappers/standalone_python_musl.pth", \
+      "/opt/python/lib/python3.11/site-packages/"]
 
 # =========== final ===========
 FROM --platform=linux/386 debian:latest AS final
