@@ -57,7 +57,7 @@ jobs: {
                 "run": "docker run --rm \
                     -v \"${{ github.workspace }}/ci/smoke_psutil.py:/tmp/smoke_psutil.py:ro\" \
                     release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} \
-                    sh -c '/opt/python/bin/pip install --quiet --no-cache-dir psutil && /opt/python/bin/python /tmp/smoke_psutil.py'",
+                    sh -c 'apt-get update -y && apt-get install -y build-essential && /opt/python/bin/pip install --quiet --no-cache-dir psutil && /opt/python/bin/python /tmp/smoke_psutil.py'",
             },
             {
                 "name": "tkinter smoke test (non-blocking — see TODO in build_tk.sh)",
