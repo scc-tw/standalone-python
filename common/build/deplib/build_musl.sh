@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-git clone https://github.com/25077667/musl-cross-make.git
+git clone --depth 1 https://github.com/25077667/musl-cross-make.git
 
 cp ./config.mak musl-cross-make/config.mak
 
