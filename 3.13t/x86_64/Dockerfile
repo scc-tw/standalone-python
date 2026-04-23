@@ -46,72 +46,93 @@ COPY ["common/build/deplib/build_zlib.sh", "."]
 RUN set -eux && ./build_zlib.sh
 
 # =========== ffi ===========
-FROM libz_builder AS ffi_builder
+FROM base_builder AS ffi_builder
 COPY ["common/build/deplib/build_ffi.sh", "."]
 RUN set -eux && ./build_ffi.sh
 
 # =========== expat ===========
-FROM ffi_builder AS expat_builder
+FROM base_builder AS expat_builder
 COPY ["common/build/deplib/build_expat.sh", "."]
 RUN set -eux && ./build_expat.sh
 
 # =========== gdbm ===========
-FROM expat_builder AS gdbm_builder
+FROM base_builder AS gdbm_builder
 COPY ["common/build/deplib/build_gdbm.sh", "."]
 RUN set -eux && ./build_gdbm.sh
 
 # =========== lzma ===========
-FROM gdbm_builder AS lzma_builder
+FROM base_builder AS lzma_builder
 COPY ["common/build/deplib/build_lzma.sh", "."]
 RUN set -eux && ./build_lzma.sh
 
 # =========== gettext ===========
-FROM lzma_builder AS gettext_builder
+FROM base_builder AS gettext_builder
 COPY ["common/build/deplib/build_gettext.sh", "."]
 RUN set -eux && ./build_gettext.sh
 
 # =========== ncurses ===========
-FROM gettext_builder AS ncurses_builder
+FROM base_builder AS ncurses_builder
 COPY ["common/build/deplib/build_ncurses.sh", "."]
 RUN set -eux && ./build_ncurses.sh
 
 # =========== openssl ===========
-FROM ncurses_builder AS openssl_builder
+FROM libz_builder AS openssl_builder
 COPY ["common/build/deplib/build_openssl.sh", "."]
 RUN set -eux && ./build_openssl.sh
 
 # =========== readline ===========
-FROM openssl_builder AS readline_builder
+FROM ncurses_builder AS readline_builder
 COPY ["common/build/deplib/build_readline.sh", "common/patches/common/ncurses/fix-ncurses-underlinking.patch", "."]
 RUN set -eux && ./build_readline.sh
 
 # =========== tcl ===========
-FROM readline_builder AS tcl_builder
+FROM base_builder AS tcl_builder
 COPY ["common/build/deplib/build_tcl.sh", "."]
 RUN set -eux && ./build_tcl.sh
 
 # =========== xz ===========
-FROM tcl_builder AS xz_builder
+FROM base_builder AS xz_builder
 COPY ["common/build/deplib/build_xz.sh", "."]
 RUN set -eux && ./build_xz.sh
 
 # =========== bzip2 ===========
-FROM xz_builder AS bzip2_builder
+FROM base_builder AS bzip2_builder
 COPY ["common/build/deplib/build_bzip2.sh", "."]
 RUN set -eux && ./build_bzip2.sh
 
 # =========== uuid ===========
-FROM bzip2_builder AS uuid_builder
+FROM base_builder AS uuid_builder
 COPY ["common/build/deplib/build_uuid.sh", "."]
 RUN set -eux && ./build_uuid.sh
 
 # =========== sqlite3 ===========
-FROM uuid_builder AS sqlite3_builder
+FROM readline_builder AS sqlite3_builder
 COPY ["common/build/deplib/build_sqlite3.sh", "."]
 RUN set -eux && ./build_sqlite3.sh
 
+# =========== deps_merged (fan-in from parallel dep stages) ===========
+# Each deplib stage above is FROM base_builder (plus the two real
+# edges: openssl<-libz, readline<-ncurses). BuildKit runs the
+# leaves in parallel; this stage merges their /opt/shared_libraries
+# outputs into one prefix for python_builder to link against.
+FROM base_builder AS deps_merged
+COPY --from=libz_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=ffi_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=expat_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=gdbm_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=lzma_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=gettext_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=ncurses_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=openssl_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=readline_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=tcl_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=xz_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=bzip2_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=uuid_builder /opt/shared_libraries /opt/shared_libraries
+COPY --from=sqlite3_builder /opt/shared_libraries /opt/shared_libraries
+
 # =========== Python ===========
-FROM sqlite3_builder AS python_builder
+FROM deps_merged AS python_builder
 ENV PYTHON_VERSION=3.13.13 \
     DISABLE_GIL=1 \
     PYTHON_PIP_VERSION=26.0.1 \

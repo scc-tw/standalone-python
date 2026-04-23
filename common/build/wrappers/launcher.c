@@ -288,6 +288,23 @@ int main(int argc, char **argv) {
     setenv("_STANDALONE_PYTHON_MUSL_LD", ld_so.data, 1);
     setenv("_STANDALONE_PYTHON_MUSL_VERSION", MUSL_VERSION, 1);
 
+    /* Point ncurses at the shipped terminfo DB. libncurses/libtinfo was
+     * compiled with `--prefix=/opt/shared_libraries`, so its compile-time
+     * default terminfo path is `/opt/shared_libraries/share/terminfo` —
+     * but packing-initializer moves that tree to
+     * `/opt/python/shared_libraries/share/terminfo`, so the baked path
+     * dangles after packing and `curses.setupterm()` fails with "could
+     * not find terminfo database". TERMINFO_DIRS is the official
+     * relocatable override: ncurses searches its colon-separated entries
+     * in order. We prepend our shipped path, then common host locations
+     * so a user who maintains their own terminfo still works. Using
+     * setenv(..., 0) means an explicit override by the user wins. */
+    str terminfo_dirs = {0};
+    str_setf(&terminfo_dirs,
+             "%s/shared_libraries/share/terminfo:/etc/terminfo:/lib/terminfo:/usr/share/terminfo",
+             prefix.data);
+    setenv("TERMINFO_DIRS", terminfo_dirs.data, 0);
+
     execv(ld_so.data, nav);
     die("execv");
     return 127;
