@@ -146,8 +146,14 @@ COPY --from=zstd_builder /opt/shared_libraries /opt/shared_libraries
 
 # =========== Python ===========
 FROM deps_merged AS python_builder
+# EXTRA_PGO_EXCLUDES: drop test_struct from the PGO profile task. Its
+# test_endian_table_init_subinterpreters races on importlib._bootstrap_external
+# ._fill_cache() during concurrent subinterpreter import on free-threaded
+# builds (upstream gh-140260 / gh-142414). Remove when the fix lands in a
+# 3.14.x point release.
 ENV PYTHON_VERSION=3.14.4 \
     DISABLE_GIL=1 \
+    EXTRA_PGO_EXCLUDES=test_struct \
     PYTHON_PIP_VERSION=26.0.1 \
     PYTHON_SETUPTOOLS_VERSION=82.0.1
 

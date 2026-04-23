@@ -48,6 +48,33 @@ if [ "${DISABLE_GIL:-0}" = "1" ]; then
     CONFIGURE_EXTRA="--disable-gil"
 fi
 
+# PGO exclusions for the musl (Alpine) base. The default PROFILE_TASK from
+# configure.ac is `-m test --pgo --timeout=$(TESTTIMEOUT)`; we append -x
+# flags for tests that fail during profile generation because of musl
+# limitations rather than CPython regressions. Alpine aports follows the
+# same pattern (their ppc64le branch excludes `test_time`) but handles
+# musl locale breakage in post-build `check()` only because they never
+# build 3.13 or free-threaded. We must handle it at PGO time.
+#
+# test_re: test_locale_caching / test_locale_compiled assume iso8859-1
+# case-folding works. musl's LC_CTYPE has no such locale data, so the
+# case-insensitive match of `\xc5` ~ `\xe5` fails. Alpine's own check()
+# skips the whole test_re module on musl for the same reason. 3.12 passed
+# by accident because Modules/_sre/sre.c called libc `tolower` directly;
+# 3.13 routes through a `sre_tolower` wrapper that exposes the musl gap.
+PGO_EXCLUDES="test_re"
+
+# Per-Dockerfile opt-in for version-specific PGO breakage. Used by 3.14t
+# to skip test_struct.test_endian_table_init_subinterpreters, which races
+# on importlib._bootstrap_external._fill_cache() under concurrent
+# subinterpreter import (upstream gh-140260 / gh-142414). Remove the ENV
+# once the upstream fix lands in a 3.14.x point release.
+if [ -n "${EXTRA_PGO_EXCLUDES:-}" ]; then
+    PGO_EXCLUDES="${PGO_EXCLUDES} ${EXTRA_PGO_EXCLUDES}"
+fi
+
+export PROFILE_TASK="-m test --pgo --timeout=\$(TESTTIMEOUT) -x ${PGO_EXCLUDES}"
+
 ./configure --build="$gnuArch" --enable-loadable-sqlite-extensions \
     --enable-optimizations --enable-option-checking=fatal --enable-shared \
     --with-lto --with-system-expat --without-ensurepip \
