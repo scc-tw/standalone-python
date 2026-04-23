@@ -46,15 +46,14 @@ build:
             sh -c '/opt/python/bin/pip install --quiet --no-cache-dir psutil && /opt/python/bin/python /tmp/smoke_psutil.py'
           ;;
       esac
-    # Tkinter smoke. libtk8.6.so links against X11 at runtime; the debian
-    # final image doesn't carry those by default, so we install the minimum
-    # runtime libs (libx11-6 libxft2 libfontconfig1) inside the throwaway
-    # test container before running the script.
+    # Tkinter smoke. libtk.so's X11 / font deps are shipped inside
+    # /opt/python/shared_libraries/lib (musl-built, vendored by build_tk.sh),
+    # so no host X11 install is needed.
     - |
       docker run --rm \
         -v "${CI_PROJECT_DIR}/ci/smoke_tkinter.py:/tmp/smoke_tkinter.py:ro" \
         release-${PACKAGE_NAME}:${version}-${architecture} \
-        sh -c 'apt-get update -qq >/dev/null && apt-get install -qq -y libx11-6 libxft2 libfontconfig1 >/dev/null && /opt/python/bin/python /tmp/smoke_tkinter.py'
+        /opt/python/bin/python /tmp/smoke_tkinter.py
     - docker save release-${PACKAGE_NAME}:${version}-${architecture} > release-${version}-${architecture}.tar
     - bash ci/packing_release_tar.sh release-${version}-${architecture}.tar
     - gzip -9 build/release-${version}-${architecture}.tar

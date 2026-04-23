@@ -35,6 +35,10 @@ fetch_mirrored "$tarball" \
 
 tar -xvf "$tarball" && cd "Python-${PYTHON_VERSION}"
 
+# Apply CPython source patches — gcc 14+ compatibility fix for Modules/_tkinter.c.
+# See common/patches/common/python/py27-tkinter-gcc14-typecast.patch for rationale.
+patch --ignore-whitespace -p0 < ../py27-tkinter-gcc14-typecast.patch
+
 export EXTRA_CFLAGS="-DTHREAD_STACK_SIZE=0x100000"
 export LDFLAGS="${LDFLAGS:--Wl},--strip-all"
 
@@ -43,7 +47,15 @@ export LDFLAGS="${LDFLAGS:--Wl},--strip-all"
 # Our ncurses is built with --enable-widec (ncurses 6.x default), so
 # headers live under `include/ncursesw/` and libraries are `libncursesw*`.
 # Without the ncursesw include setup.py silently skips building `_curses`.
-export LOCAL_INCLUDES="-I/opt/shared_libraries/include/ncursesw"
+#
+# Modules/expat MUST come before /opt/shared_libraries/include/ so that
+# Modules/pyexpat.c's `#include "expat.h"` resolves to the BUNDLED 2.2.x
+# header rather than our shipped 2.7.5 — otherwise we split the expat ABI
+# (pyexpat.c sees 2.7.5 declarations, bundled xmlparse.c sees 2.2.x
+# definitions via its own-directory resolution for `""` includes) and
+# pyexpat.so fails at import with "XML_ParserCreateNS: symbol not found".
+export LOCAL_INCLUDES="-I$(pwd)/Modules/expat"
+export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/ncursesw"
 export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/"
 export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES}"
 export CPPFLAGS="${CPPFLAGS} ${LOCAL_INCLUDES}"

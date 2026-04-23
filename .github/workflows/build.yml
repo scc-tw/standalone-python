@@ -64,7 +64,7 @@ jobs: {
                 "run": "docker run --rm \
                     -v \"${{ github.workspace }}/ci/smoke_tkinter.py:/tmp/smoke_tkinter.py:ro\" \
                     release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }} \
-                    sh -c 'apt-get update -qq >/dev/null && apt-get install -qq -y libx11-6 libxft2 libfontconfig1 >/dev/null && /opt/python/bin/python /tmp/smoke_tkinter.py'",
+                    /opt/python/bin/python /tmp/smoke_tkinter.py",
             },
             {
                 "name": "Save docker image as tar file",

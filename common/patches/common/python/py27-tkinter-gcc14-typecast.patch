@@ -1,0 +1,30 @@
+Fix _tkinter compilation failure on gcc 14+ (Python 2.7 + Tcl 8.6 + UCS4).
+
+gcc 14 promoted -Wincompatible-pointer-types from warning to error by
+default. Modules/_tkinter.c:1178 calls Tcl_NewUnicodeObj(inbuf, size)
+where inbuf is Py_UNICODE* (a 4-byte int on --enable-unicode=ucs4
+builds) and Tcl_NewUnicodeObj takes `const Tcl_UniChar*` (a 2-byte
+unsigned short in Tcl 8.6). The line only runs when the two pointee
+sizes match at runtime — which is FALSE on UCS4-Py + Tcl-8.6 — so it's
+dead code, but gcc checks the call-site types regardless and refuses.
+
+The explicit cast makes gcc accept the declaration. Runtime is
+unaffected: the surrounding `if` is false on this configuration, so
+the cast never executes. The UCS4→UTF-16 transcode fall-through path
+(immediately below) is what actually runs.
+
+--- Modules/_tkinter.c
++++ Modules/_tkinter.c
+@@ -1175,7 +1175,11 @@
+             return NULL;
+         }
+         if (sizeof(Py_UNICODE) == sizeof(Tcl_UniChar))
+-            return Tcl_NewUnicodeObj(inbuf, size);
++            /* Dead branch on UCS4-Py + Tcl-8.6 (the sizes differ). The
++             * cast is required only to keep gcc 14+ happy; at runtime
++             * the if above is false and control falls through to the
++             * transcode path below. */
++            return Tcl_NewUnicodeObj((const Tcl_UniChar *)inbuf, size);
+         allocsize = ((size_t)size) * sizeof(Tcl_UniChar);
+         if (allocsize >= size)
+             outbuf = (Tcl_UniChar*)attemptckalloc(allocsize);

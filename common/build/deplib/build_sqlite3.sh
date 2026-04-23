@@ -19,7 +19,24 @@ tar -zxvf "$tarball" && cd "sqlite-autoconf-${SQLITE_VERSION}"
 export LOCAL_INCLUDES="-I/opt/shared_libraries/include/ncurses"
 export LOCAL_INCLUDES="${LOCAL_INCLUDES} -I/opt/shared_libraries/include/" # some wired packages include ncurses.h or ncurses/ncurses.h
 
-export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES}"
+# SQLite's autoconf amalgamation does NOT enable the common optional
+# features by default. Python's test_sqlite3 (and many real users) expect
+# FTS4/FTS5, RTREE, JSON1, column metadata, and the DBSTAT virtual table
+# to be present. These flags match what Alpine, Debian, and Fedora all
+# ship as their standard sqlite build.
+SQLITE_FEATURE_CFLAGS=" \
+    -DSQLITE_ENABLE_FTS3 \
+    -DSQLITE_ENABLE_FTS3_PARENTHESIS \
+    -DSQLITE_ENABLE_FTS4 \
+    -DSQLITE_ENABLE_FTS5 \
+    -DSQLITE_ENABLE_RTREE \
+    -DSQLITE_ENABLE_JSON1 \
+    -DSQLITE_ENABLE_COLUMN_METADATA \
+    -DSQLITE_ENABLE_DBSTAT_VTAB \
+    -DSQLITE_ENABLE_MATH_FUNCTIONS \
+    -DSQLITE_ENABLE_LOAD_EXTENSION"
+
+export CFLAGS="${CFLAGS} ${LOCAL_INCLUDES} ${SQLITE_FEATURE_CFLAGS}"
 export LDFLAGS="${LDFLAGS} -L/opt/shared_libraries/lib"
 
 ./configure --prefix=/opt/shared_libraries

@@ -138,7 +138,7 @@ COPY --from=sqlite3_builder /opt/shared_libraries /opt/shared_libraries
 # =========== Python 2.7 ===========
 FROM deps_merged AS python_builder
 
-COPY ["common/build/deplib/build_python_py2.sh", "common/build/deplib/install_pip_py2.sh", "."]
+COPY ["common/build/deplib/build_python_py2.sh", "common/build/deplib/install_pip_py2.sh", "common/patches/common/python/py27-tkinter-gcc14-typecast.patch", "."]
 RUN set -eux && ./build_python_py2.sh && ./install_pip_py2.sh
 
 # =========== launcher (static C binary, replaces shell wrappers) ===========
