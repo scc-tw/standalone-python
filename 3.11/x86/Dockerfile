@@ -4,7 +4,24 @@ FROM --platform=${TARGETPLATFORM} alpine:3.18.3 AS base_builder
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
     PYTHON_VERSION=3.11.9 \
-    IS_32BIT=1
+    IS_32BIT=1 \
+    ZLIB_VERSION=1.3.1 \
+    FFI_VERSION=3.4.4 \
+    EXPAT_VERSION=2.6.0 \
+    GDBM_VERSION=1.23 \
+    LZMA_VERSION=4.32.7 \
+    GETTEXT_VERSION=0.22.2 \
+    NCURSES_VERSION=6.4 \
+    OPENSSL_VERSION=1.1.1w \
+    READLINE_VERSION=8.2 \
+    TCL_VERSION=8.6.13 \
+    XZ_VERSION=5.4.4 \
+    BZIP2_VERSION=1.0.8 \
+    SQLITE_VERSION=3430100 \
+    SQLITE_VERSION_LITERIAL=3.43.1 \
+    SQLITE_YEAR=2023 \
+    PYTHON_PIP_VERSION=23.2.1 \
+    PYTHON_SETUPTOOLS_VERSION=65.5.1
 
 WORKDIR /src
 RUN set -eux && apk add --no-cache ca-certificates tzdata && \

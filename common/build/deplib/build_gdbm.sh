@@ -1,11 +1,11 @@
 #!/bin/sh
 
-# https://ftpmirror.gnu.org/gdbm/gdbm-1.23.tar.gz
+# https://ftp.gnu.org/gnu/gdbm/gdbm-1.23.tar.gz
 set -e
-export READLINE_VERSION=1.23
+export GDBM_VERSION=${GDBM_VERSION:-1.23}
 
-wget https://ftp.gnu.org/gnu/gdbm/gdbm-${READLINE_VERSION}.tar.gz
-tar -xzf gdbm-${READLINE_VERSION}.tar.gz && cd gdbm-${READLINE_VERSION}
+wget https://ftp.gnu.org/gnu/gdbm/gdbm-${GDBM_VERSION}.tar.gz
+tar -xzf gdbm-${GDBM_VERSION}.tar.gz && cd gdbm-${GDBM_VERSION}
 
 export CFLAGS="${CFLAGS} -fPIC"
 ./configure --prefix=/opt/shared_libraries

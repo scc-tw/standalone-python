@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e
-export NCURSES_VERSION=6.4
+export NCURSES_VERSION=${NCURSES_VERSION:-6.4}
 
 wget http://core.ring.gr.jp/pub/GNU/ncurses/ncurses-${NCURSES_VERSION}.tar.gz
 tar -xzf ncurses-${NCURSES_VERSION}.tar.gz && cd ncurses-${NCURSES_VERSION}

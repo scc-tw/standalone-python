@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e
-export BZIP2_VERSION=1.0.8
+export BZIP2_VERSION=${BZIP2_VERSION:-1.0.8}
 
 wget https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz
 tar -xzf bzip2-${BZIP2_VERSION}.tar.gz && cd bzip2-${BZIP2_VERSION}

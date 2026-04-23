@@ -2,7 +2,7 @@
 
 # https://core.ring.gr.jp/pub/GNU/readline/readline-8.2.tar.gz
 set -e
-export READLINE_VERSION=8.2
+export READLINE_VERSION=${READLINE_VERSION:-8.2}
 
 wget http://core.ring.gr.jp/pub/GNU/readline/readline-${READLINE_VERSION}.tar.gz
 tar -xzf readline-${READLINE_VERSION}.tar.gz && cd readline-${READLINE_VERSION}
