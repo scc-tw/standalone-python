@@ -29,7 +29,7 @@ RUN set -eux && apk add --no-cache ca-certificates tzdata && \
         bison flex gawk patch
 
 # # =========== musl ===========
-FROM amd64/debian:bookworm AS musl_builder
+FROM --platform=linux/amd64 debian:bookworm AS musl_builder
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei \
     IS_32BIT=0
@@ -124,7 +124,7 @@ RUN set -eux && \
     file launcher
 
 # =========== patch_stage ===========
-FROM amd64/debian:latest AS patch_stage
+FROM --platform=linux/amd64 debian:latest AS patch_stage
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei \
     IS_32BIT=0
@@ -153,7 +153,7 @@ COPY ["common/build/wrappers/rpath-patcher.sh", "."]
 RUN set -eux && ./rpath-patcher.sh
 
 # =========== final ===========
-FROM amd64/debian:latest AS final
+FROM --platform=linux/amd64 debian:latest AS final
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei
 
