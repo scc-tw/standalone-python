@@ -2,7 +2,7 @@ FROM --platform=linux/amd64 alpine:3.22 AS base_builder
 
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    PYTHON_VERSION=3.12.13 \
+    PYTHON_VERSION=3.13.13 \
     IS_32BIT=0 \
     ZLIB_VERSION=1.3.2 \
     FFI_VERSION=3.5.2 \
@@ -39,7 +39,7 @@ RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y build-essential wget git file tar xz-utils dpkg-dev libnsl-dev libtirpc-dev uuid-dev patch
 
 WORKDIR /src
-COPY ["common/build/deplib/build_musl.sh", "3.12/x86_64/deplib/config.mak", "."]
+COPY ["common/build/deplib/build_musl.sh", "3.13/x86_64/deplib/config.mak", "."]
 RUN set -eux && ./build_musl.sh
 
 # =========== libz ===========
@@ -172,7 +172,7 @@ RUN set -eux && ./rpath-patcher.sh
 # the launcher has set _STANDALONE_PYTHON_MUSL_VERSION in the env.
 COPY ["common/build/wrappers/standalone_python_musl.py", \
       "common/build/wrappers/standalone_python_musl.pth", \
-      "/opt/python/lib/python3.12/site-packages/"]
+      "/opt/python/lib/python3.13/site-packages/"]
 
 # =========== final ===========
 FROM --platform=linux/amd64 debian:latest AS final

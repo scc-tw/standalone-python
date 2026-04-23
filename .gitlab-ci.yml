@@ -44,7 +44,7 @@ build:
     paths: ["build/release-${version}-${architecture}.tar.gz", "${version}-${architecture}.log"]
   parallel:
     matrix:
-      - version: ["3.12", "3.11", "3.10", "2.7"]
+      - version: ["3.15", "3.14", "3.13", "3.12", "3.11", "3.10", "2.7"]
         architecture: ["x86_64", "x86"]
   tags: [shell]
   rules:
@@ -77,7 +77,7 @@ upload:
       "${PACKAGE_REGISTRY_URL}${PACKAGE_NAME}/${PACKAGE_VERSION}/release-${version}-${architecture}.tar.gz?${GET_FILE_ATTR_MAGIC}" >> ${version}-${architecture}-result.txt
   parallel:
     matrix:
-      - version: ["3.12", "3.11", "3.10", "2.7"]
+      - version: ["3.15", "3.14", "3.13", "3.12", "3.11", "3.10", "2.7"]
         architecture: ["x86_64", "x86"]
   artifacts:
     paths: ["*-result.txt"]

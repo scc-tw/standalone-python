@@ -16,6 +16,7 @@ ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
     TCL_VERSION=8.6.17 \
     XZ_VERSION=5.8.3 \
     BZIP2_VERSION=1.0.8 \
+    UUID_VERSION=2.40.4 \
     SQLITE_VERSION=3530000 \
     SQLITE_VERSION_LITERIAL=3.53.0 \
     SQLITE_YEAR=2026 \
@@ -101,8 +102,13 @@ FROM xz_builder AS bzip2_builder
 COPY ["common/build/deplib/build_bzip2.sh", "."]
 RUN set -eux && ./build_bzip2.sh
 
+# =========== uuid ===========
+FROM bzip2_builder AS uuid_builder
+COPY ["common/build/deplib/build_uuid.sh", "."]
+RUN set -eux && ./build_uuid.sh
+
 # =========== sqlite3 ===========
-FROM bzip2_builder AS sqlite3_builder
+FROM uuid_builder AS sqlite3_builder
 COPY ["common/build/deplib/build_sqlite3.sh", "."]
 RUN set -eux && ./build_sqlite3.sh
 

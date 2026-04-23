@@ -1,9 +1,9 @@
-FROM --platform=linux/amd64 alpine:3.22 AS base_builder
+FROM --platform=linux/386 alpine:3.22 AS base_builder
 
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    PYTHON_VERSION=3.12.13 \
-    IS_32BIT=0 \
+    PYTHON_VERSION=3.13.13 \
+    IS_32BIT=1 \
     ZLIB_VERSION=1.3.2 \
     FFI_VERSION=3.5.2 \
     EXPAT_VERSION=2.7.5 \
@@ -30,16 +30,16 @@ RUN set -eux && apk add --no-cache ca-certificates tzdata && \
         bison flex gawk patch
 
 # # =========== musl ===========
-FROM --platform=linux/amd64 debian:bookworm AS musl_builder
+FROM --platform=linux/386 debian:bookworm AS musl_builder
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei \
-    IS_32BIT=0
+    IS_32BIT=1
 
 RUN apt-get update -y && apt-get upgrade -y && \
     apt-get install -y build-essential wget git file tar xz-utils dpkg-dev libnsl-dev libtirpc-dev uuid-dev patch
 
 WORKDIR /src
-COPY ["common/build/deplib/build_musl.sh", "3.12/x86_64/deplib/config.mak", "."]
+COPY ["common/build/deplib/build_musl.sh", "3.13/x86/deplib/config.mak", "."]
 RUN set -eux && ./build_musl.sh
 
 # =========== libz ===========
@@ -120,7 +120,7 @@ RUN set -eux && ./build_python.sh && ./install_pip.sh
 
 # =========== launcher (static C binary, replaces shell wrappers) ===========
 FROM musl_builder AS launcher_builder
-ENV MUSL_ARCH=x86_64
+ENV MUSL_ARCH=i386
 WORKDIR /src
 COPY ["common/build/wrappers/launcher.c", "./launcher.c"]
 # config.mak carries `MUSL_VER = X.Y.Z`; drop the patch component and bake
@@ -138,10 +138,10 @@ RUN set -eux && \
     file launcher
 
 # =========== patch_stage ===========
-FROM --platform=linux/amd64 debian:latest AS patch_stage
+FROM --platform=linux/386 debian:latest AS patch_stage
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei \
-    IS_32BIT=0
+    IS_32BIT=1
 
 RUN apt-get update -y && apt-get install -y patchelf file
 
@@ -172,10 +172,10 @@ RUN set -eux && ./rpath-patcher.sh
 # the launcher has set _STANDALONE_PYTHON_MUSL_VERSION in the env.
 COPY ["common/build/wrappers/standalone_python_musl.py", \
       "common/build/wrappers/standalone_python_musl.pth", \
-      "/opt/python/lib/python3.12/site-packages/"]
+      "/opt/python/lib/python3.13/site-packages/"]
 
 # =========== final ===========
-FROM --platform=linux/amd64 debian:latest AS final
+FROM --platform=linux/386 debian:latest AS final
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei
 
