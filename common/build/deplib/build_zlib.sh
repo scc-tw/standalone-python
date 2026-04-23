@@ -6,7 +6,7 @@
 set -e
 export ZLIB_VERSION=${ZLIB_VERSION:-1.3.1}
 
-wget https://www.zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz
+wget https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz
 tar -xzf zlib-${ZLIB_VERSION}.tar.gz && cd zlib-${ZLIB_VERSION}
 
 ./configure --prefix=/opt/shared_libraries
