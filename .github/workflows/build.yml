@@ -127,10 +127,19 @@ jobs: {
                 },
             },
             {
+                # Without a pattern, download-artifact@v4 pulls everything in
+                # the run — including the `*.dockerbuild` metadata artifacts
+                # that docker/build-push-action@v6 auto-uploads per build
+                # (20 of them at matrix fan-out). Those aren't release
+                # payloads, and one flaky download in that set will fail the
+                # entire step after 5 retries, blocking the release. Filter
+                # to our own tarballs; ncipollo/release-action below only
+                # globs `artifacts/*/*.tar.gz` anyway.
                 "name": "Download release tar files",
                 "uses": "actions/download-artifact@v4",
                 "with": {
                     "path": "artifacts/",
+                    "pattern": "release-*.tar.gz",
                 },
             },
             {   "name": "Set env TAG_NAME",

@@ -130,6 +130,13 @@ upload:
     paths: ["*-result.txt"]
   tags: [shell]
   rules:
+    # Mirror the build job's allow_failure for 3.15 cells. The build stage
+    # tolerates 3.15 failures (pip 26 / locate_file); without the matching
+    # rule here, a failed build cell propagates a missing tarball into this
+    # matrix cell, the curl --upload-file fails, and the whole pipeline
+    # goes red even though build was intentionally allowed to fail.
+    - if: '$CI_COMMIT_TAG == null && $version =~ /^3\.15/'
+      allow_failure: true
     - if: $CI_COMMIT_TAG == null
 
 generate_release_note:
