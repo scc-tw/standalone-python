@@ -36,8 +36,8 @@ jobs: {
                     "file": "./${{ matrix.version }}/${{ matrix.architecture }}/Dockerfile",
                     "tags": "release-${{ github.ref_name }}:${{ matrix.version }}-${{ matrix.architecture }}",
                     "load": true,
-                    "cache-from": "type=gha,scope=deplibs-${{ matrix.architecture }}",
-                    "cache-to": "type=gha,mode=max,scope=deplibs-${{ matrix.architecture }}",
+                    "cache-from": "type=gha,scope=deplibs-${{ matrix.architecture }}-${{ matrix.version }}",
+                    "cache-to": "type=gha,mode=max,scope=deplibs-${{ matrix.architecture }}-${{ matrix.version }}",
                 },
             },
             {
