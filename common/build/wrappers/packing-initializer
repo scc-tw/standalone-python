@@ -39,6 +39,57 @@ shared_libraries_mover() {
     mv /opt/shared_libraries /opt/python/shared_libraries
 }
 
+sysconfig_path_rewriter() {
+    # `make install` bakes build-time LDFLAGS (including
+    # `-L/opt/shared_libraries/lib -lffi -Wl,-rpath,/opt/shared_libraries/lib`
+    # from build_python.sh) into files under /opt/python/lib:
+    #   * `_sysconfigdata*.py`     read by sysconfig / distutils
+    #   * `config-*/Makefile` or `config/Makefile`
+    #                              read by python-config.sh, some setup.py
+    #   * `python-config.py`       emits LDFLAGS on stdout
+    # shared_libraries_mover just relocated the directory, so those baked
+    # strings now point at a nonexistent path. rpath-patcher.sh fixes ELF
+    # RPATH for runtime lookup, but downstream `pip install` that compiles
+    # C extensions (e.g. psutil on x86 where no manylinux_i686 wheel exists)
+    # reads sysconfig's LDFLAGS and feeds `-L/opt/shared_libraries/lib` to
+    # ld, which fails with "cannot find -lffi" because -L is gone.
+    #
+    # For py3 we keep the install fully relocatable — the launcher already
+    # makes ELF lookup $ORIGIN-relative, so a user who moves /opt/python to
+    # /tmp/mypack/python should be able to `pip install foo-from-source` and
+    # have ld find our shipped libs. We therefore rewrite the absolute
+    # prefix to a sentinel `@STANDALONE_PYTHON_PREFIX@/shared_libraries` and
+    # let standalone_python_musl.py's .pth hook substitute `sys.prefix` for
+    # the sentinel at runtime, before any caller reads sysconfig.
+    #
+    # For py2 we use a fixed `/opt/python/shared_libraries` instead, because
+    # py2 doesn't ship the .pth runtime hook. py2 relocation has other
+    # hardcoded-path limitations anyway and is outside the release matrix's
+    # smoke tests.
+    find /opt/python/lib \
+         -type f \
+         \( -name '_sysconfigdata*.py' \
+            -o -name 'Makefile' \
+            -o -name 'python-config.py' \) \
+         -exec grep -l '/opt/shared_libraries' {} + 2>/dev/null \
+         | while read -r f; do
+             case "$f" in
+                 */python2*/*)
+                     sed -i 's|/opt/shared_libraries|/opt/python/shared_libraries|g' "$f"
+                     echo "Rewrote sysconfig paths (py2 absolute) in $f"
+                     ;;
+                 *)
+                     sed -i 's|/opt/shared_libraries|@STANDALONE_PYTHON_PREFIX@/shared_libraries|g' "$f"
+                     echo "Rewrote sysconfig paths (py3 sentinel) in $f"
+                     ;;
+             esac
+         done
+
+    # Invalidate .pyc caches for any _sysconfigdata*.py we changed — stale
+    # .pyc would mask the .py edit until the next full compileall.
+    find /opt/python/lib -path '*/__pycache__/_sysconfigdata*' -delete 2>/dev/null || true
+}
+
 shebang_rewriter() {
     # `make install` drops helper scripts into /opt/python/bin (idle3.12,
     # 2to3-3.12, python3.12-config, pydoc3.12, pip3.12, etc.) with shebangs
@@ -86,6 +137,7 @@ main() {
     pip_renamer
     shebang_rewriter
     shared_libraries_mover
+    sysconfig_path_rewriter
 }
 
 main

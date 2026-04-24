@@ -49,6 +49,93 @@ import os
 import sys
 
 
+_SYSCONFIG_PREFIX_SENTINEL = "@STANDALONE_PYTHON_PREFIX@"
+
+
+def _expand_sysconfig_prefix():
+    """Substitute sys.prefix for the build-time prefix sentinel in sysconfig.
+
+    Background
+    ----------
+    build_python.sh exports `LDFLAGS="-L/opt/shared_libraries/lib -lffi
+    -Wl,-rpath,/opt/shared_libraries/lib"` so CPython's own C extensions
+    link against the shipped libs at build time. `make install` bakes the
+    resulting LDFLAGS into `_sysconfigdata_*.py` under `build_time_vars`
+    (and mirror copies in `config-*/Makefile`, `python-config.py`). When
+    packing-initializer then moves `/opt/shared_libraries` under
+    `/opt/python/`, those absolute paths become dangling.
+
+    Instead of rewriting to a new absolute path (which would re-bake
+    /opt/python and break relocation to /tmp/whatever), packing-initializer
+    substitutes `/opt/shared_libraries` with the sentinel
+    `@STANDALONE_PYTHON_PREFIX@/shared_libraries` in those files, and this
+    function expands the sentinel to the live `sys.prefix` on every
+    interpreter startup via the .pth hook.
+
+    Why both `build_time_vars` AND `_CONFIG_VARS`:
+        sysconfig reads `build_time_vars` on first `get_config_var()` call,
+        then caches into `_CONFIG_VARS`. Most callers trigger the first
+        read, so patching `build_time_vars` alone is enough. But another
+        .pth file or a stdlib init path could have primed `_CONFIG_VARS`
+        before us. Patching both covers both orderings and is idempotent.
+    """
+    try:
+        import sysconfig
+    except ImportError:
+        return
+
+    prefix = sys.prefix
+    if not prefix or _SYSCONFIG_PREFIX_SENTINEL not in _probe_sysconfig(sysconfig):
+        return
+
+    # Patch build_time_vars (the source of truth for future lookups).
+    modname = None
+    get_name = getattr(sysconfig, "_get_sysconfigdata_name", None)
+    if callable(get_name):
+        try:
+            modname = get_name()
+        except Exception:
+            modname = None
+    if modname:
+        mod = sys.modules.get(modname)
+        if mod is None:
+            try:
+                mod = __import__(modname, fromlist=["build_time_vars"])
+            except Exception:
+                mod = None
+        btv = getattr(mod, "build_time_vars", None) if mod is not None else None
+        if isinstance(btv, dict):
+            for k, v in list(btv.items()):
+                if isinstance(v, str) and _SYSCONFIG_PREFIX_SENTINEL in v:
+                    btv[k] = v.replace(_SYSCONFIG_PREFIX_SENTINEL, prefix)
+
+    # Patch the already-populated cache, if any.
+    cache = getattr(sysconfig, "_CONFIG_VARS", None)
+    if isinstance(cache, dict):
+        for k, v in list(cache.items()):
+            if isinstance(v, str) and _SYSCONFIG_PREFIX_SENTINEL in v:
+                cache[k] = v.replace(_SYSCONFIG_PREFIX_SENTINEL, prefix)
+
+
+def _probe_sysconfig(sysconfig):
+    """Return a concatenated string of LDFLAGS-like vars for sentinel probing.
+
+    Cheap up-front check: if none of the common link/compile-flag vars
+    contain the sentinel, we skip the whole module-patching path. This
+    keeps startup cost near zero on installs that don't need the fixup
+    (e.g. future rebuilds that dropped the sentinel).
+    """
+    parts = []
+    for key in ("LDFLAGS", "LDSHARED", "BLDSHARED", "CFLAGS", "CPPFLAGS", "LIBDIR", "LIBPL"):
+        try:
+            val = sysconfig.get_config_var(key)
+        except Exception:
+            val = None
+        if isinstance(val, str):
+            parts.append(val)
+    return "\n".join(parts)
+
+
 def _activate(version_str):
     try:
         major, minor = (int(p) for p in version_str.split(".")[:2])
@@ -110,6 +197,11 @@ def _activate(version_str):
 
     sys.meta_path.insert(0, _Finder())
 
+
+# Unconditional: the sysconfig prefix fixup must run on every Python
+# startup regardless of whether the launcher set the musl env vars,
+# because downstream `pip install` readers don't depend on the launcher.
+_expand_sysconfig_prefix()
 
 _version = os.environ.get("_STANDALONE_PYTHON_MUSL_VERSION")
 if _version:
