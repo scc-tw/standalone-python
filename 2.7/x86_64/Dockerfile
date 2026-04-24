@@ -194,6 +194,14 @@ RUN set -eux && ./rpath-patcher.sh
 # bottleneck for pip 2.7 users (most Py2 wheels on PyPI are pure-Python
 # `py2.py3-none-any`). Users needing native wheels can install with
 # `--no-binary :all:`.
+#
+# What we DO need on 2.7 is the sysconfig prefix-sentinel expansion, so
+# that a pip install from source (-> distutils/sysconfig LDFLAGS) resolves
+# libffi/libsqlite3/libreadline/… against the install's actual prefix
+# after packing-initializer's relocation (and after an end-user move).
+COPY ["common/build/wrappers/standalone_python_musl_py2.py", \
+      "common/build/wrappers/standalone_python_musl_py2.pth", \
+      "/opt/python/lib/python2.7/site-packages/"]
 
 # =========== final ===========
 FROM --platform=linux/amd64 debian:latest AS final

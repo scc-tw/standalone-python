@@ -62,10 +62,12 @@ sysconfig_path_rewriter() {
     # let standalone_python_musl.py's .pth hook substitute `sys.prefix` for
     # the sentinel at runtime, before any caller reads sysconfig.
     #
-    # For py2 we use a fixed `/opt/python/shared_libraries` instead, because
-    # py2 doesn't ship the .pth runtime hook. py2 relocation has other
-    # hardcoded-path limitations anyway and is outside the release matrix's
-    # smoke tests.
+    # Both py2 and py3 use the same sentinel: their respective .pth hooks
+    # (standalone_python_musl_py2.py, standalone_python_musl.py) expand
+    # @STANDALONE_PYTHON_PREFIX@ to the live sys.prefix at interpreter
+    # startup. This keeps installs fully relocatable (move /opt/python →
+    # /tmp/whatever and `pip install foo-from-source` still resolves libs
+    # inside the moved tree) without any ELF rewriting at move time.
     find /opt/python/lib \
          -type f \
          \( -name '_sysconfigdata*.py' \
@@ -73,21 +75,33 @@ sysconfig_path_rewriter() {
             -o -name 'python-config.py' \) \
          -exec grep -l '/opt/shared_libraries' {} + 2>/dev/null \
          | while read -r f; do
-             case "$f" in
-                 */python2*/*)
-                     sed -i 's|/opt/shared_libraries|/opt/python/shared_libraries|g' "$f"
-                     echo "Rewrote sysconfig paths (py2 absolute) in $f"
-                     ;;
-                 *)
-                     sed -i 's|/opt/shared_libraries|@STANDALONE_PYTHON_PREFIX@/shared_libraries|g' "$f"
-                     echo "Rewrote sysconfig paths (py3 sentinel) in $f"
-                     ;;
-             esac
+             sed -i 's|/opt/shared_libraries|@STANDALONE_PYTHON_PREFIX@/shared_libraries|g' "$f"
+             echo "Rewrote sysconfig paths (sentinel) in $f"
          done
+
+    # Also patch the `python*-config` shell script if it bakes the absolute
+    # path (py2's config/Makefile-based python-config does; py3's
+    # python3.N-config is a shim that re-execs the interpreter). Restrict
+    # to shebanged text files so we never sed a real binary — the new
+    # token is 22 bytes longer than the old and would corrupt fixed-size
+    # structures if one of the real interpreter ELFs happened to contain
+    # the literal path by accident.
+    for f in /opt/python/bin/*; do
+        [ -f "$f" ] || continue
+        head_bytes=$(head -c 2 "$f" 2>/dev/null || true)
+        [ "$head_bytes" = "#!" ] || continue
+        grep -q '/opt/shared_libraries' "$f" 2>/dev/null || continue
+        sed -i 's|/opt/shared_libraries|@STANDALONE_PYTHON_PREFIX@/shared_libraries|g' "$f"
+        echo "Rewrote sysconfig paths (sentinel) in $f"
+    done
 
     # Invalidate .pyc caches for any _sysconfigdata*.py we changed — stale
     # .pyc would mask the .py edit until the next full compileall.
-    find /opt/python/lib -path '*/__pycache__/_sysconfigdata*' -delete 2>/dev/null || true
+    find /opt/python/lib \
+         \( -path '*/__pycache__/_sysconfigdata*' \
+            -o -name '_sysconfigdata.pyc' \
+            -o -name '_sysconfigdata.pyo' \) \
+         -delete 2>/dev/null || true
 }
 
 shebang_rewriter() {
